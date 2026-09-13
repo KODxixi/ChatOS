@@ -25,6 +25,10 @@ _CONVERSATION_COLUMNS = """
     conversations.is_archived AS is_archived,
     conversations.note AS note,
     conversations.is_indexing_enabled AS is_indexing_enabled,
+    conversations.domain AS domain,
+    conversations.project_id AS project_id,
+    conversations.project_role AS project_role,
+    conversations.classification_status AS classification_status,
     COALESCE(source_accounts.source_app_id, 'wechat') AS source_app_id,
     COALESCE(
         conversation_origins.source_account_id,
@@ -381,6 +385,10 @@ def _conversation_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "isFavorite": bool(row["is_favorite"]),
         "isArchived": bool(row["is_archived"]),
         "isIndexingEnabled": bool(row["is_indexing_enabled"]),
+        "domain": row["domain"],
+        "projectId": row["project_id"],
+        "projectRole": row["project_role"],
+        "classificationStatus": row["classification_status"],
         "note": row["note"],
     }
 

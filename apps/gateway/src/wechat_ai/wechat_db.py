@@ -396,6 +396,15 @@ def import_sources(
                 conversation_ids=tuple(sorted(normalized_conversation_ids)),
             )
 
+        # 阶段3.6：自动分类——按标题/内容关键词将会话归入 domain
+        # （project/work/personal/service/subscription），仅处理 needs_review 的。
+        try:
+            from .services.conversation_classifier import classify_all
+
+            classify_all(connection, only_needs_review=True)
+        except Exception:
+            logger.exception("conversation classification failed (non-fatal)")
+
         from .services.knowledge_projection_service import project_knowledge
 
         fact_conversation_ids = tuple(sorted(normalized_conversation_ids))

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..services.activity_filter import evaluate_activity
+from ..services.conversation_classifier import classify_all
 from ..services.conversation_service import (
     ConnectionFactory,
     ConversationNotFound,
@@ -36,6 +37,10 @@ class ConversationResponse(BaseModel):
     isFavorite: bool
     isArchived: bool
     isIndexingEnabled: bool
+    domain: str | None = None
+    projectId: str | None = None
+    projectRole: str | None = None
+    classificationStatus: str | None = None
     note: str
 
 
@@ -262,6 +267,25 @@ def create_conversations_router(
             "alreadyInactive": result.already_inactive,
             "active": result.active,
             "markedIds": list(result.marked_ids),
+        }
+
+    @router.post("/conversations/classify")
+    def classify_conversations_endpoint(
+        all: bool = False,
+    ) -> dict[str, object]:
+        """Run automatic conversation classification.
+
+        By default only classifies conversations marked needs_review.
+        Set ?all=true to re-classify everything.
+        """
+        with closing(connection_factory()) as connection:
+            connection.row_factory = sqlite3.Row
+            result = classify_all(connection, only_needs_review=not all)
+        return {
+            "evaluated": result.evaluated,
+            "classified": result.classified,
+            "needsReview": result.needs_review,
+            "byDomain": result.by_domain,
         }
 
     return router
