@@ -8,6 +8,10 @@ export interface Conversation {
   isFavorite: boolean
   isArchived: boolean
   isIndexingEnabled: boolean
+  domain: string | null
+  projectId: string | null
+  projectRole: string | null
+  classificationStatus: string | null
   note: string
 }
 
