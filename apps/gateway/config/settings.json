@@ -1,5 +1,6 @@
 {
   "rerankEnabled": false,
   "activityFilterEnabled": true,
-  "activityFilterInactiveDays": 30
+  "activityFilterInactiveDays": 30,
+  "libraryDb": "D:\\ChatOS-Vault\\library\\wechat-ai.sqlite"
 }
