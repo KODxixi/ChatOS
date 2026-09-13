@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[codz]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+.venv/
+build/
+dist/
+
+# Frontend
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local configuration and sensitive state
+config/*.json
+!config/*.example.json
+config.json
+.env
+.env.*
+*.log
+
+# Local databases and runtime data
+*.db
+*.sqlite
+*.sqlite3
+data/**
+!data/library/
+!data/library/.gitkeep
+!data/state/
+!data/state/.gitkeep
+!data/cache/
+!data/cache/.gitkeep
+!data/logs/
+!data/logs/.gitkeep
+
+# Runtime
+var/
+tmp/
+artifacts/
+
+# Keys
+key/
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
