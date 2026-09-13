@@ -1,4 +1,4 @@
-import type { ConversationPage, HealthResponse, ProjectPage, SearchPage } from '../types'
+import type { ConversationPage, ConversationPreviewPage, HealthResponse, ProjectPage, SearchPage } from '../types'
 
 const API_BASE = '/api'
 
@@ -23,6 +23,16 @@ export function getConversations(
   if (cursor) params.set('cursor', cursor)
   if (kind) params.set('kind', kind)
   return fetchJson<ConversationPage>(`/conversations?${params.toString()}`)
+}
+
+export function getConversationPreviews(
+  limit = 100,
+  onlyActive = true,
+  domain?: string,
+): Promise<ConversationPreviewPage> {
+  const params = new URLSearchParams({ limit: String(limit), onlyActive: String(onlyActive) })
+  if (domain) params.set('domain', domain)
+  return fetchJson<ConversationPreviewPage>(`/conversations/preview?${params.toString()}`)
 }
 
 export function searchMessages(

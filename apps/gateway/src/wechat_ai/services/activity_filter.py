@@ -17,9 +17,9 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Only evaluate these conversation kinds.  System conversations (filehelper,
-# newsapp, gh_* official accounts) are always left untouched.
-_EVALUATED_KINDS = frozenset({"group", "direct"})
+# Evaluate all conversation kinds.  System conversations (gh_* official
+# accounts) with zero user messages are also marked inactive.
+_EVALUATED_KINDS = frozenset({"group", "direct", "system"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +102,7 @@ def evaluate_activity(
             SELECT id, title, kind, is_indexing_enabled
             FROM conversations
             WHERE id IN ({placeholders})
-              AND kind IN ('group', 'direct')
+              AND kind IN ('group', 'direct', 'system')
             """,
             conversation_ids,
         ).fetchall()
@@ -111,7 +111,7 @@ def evaluate_activity(
             """
             SELECT id, title, kind, is_indexing_enabled
             FROM conversations
-            WHERE kind IN ('group', 'direct')
+            WHERE kind IN ('group', 'direct', 'system')
             """
         ).fetchall()
 

@@ -94,6 +94,28 @@ class MessagePage(BaseModel):
     nextCursor: str | None
 
 
+class ConversationPreview(BaseModel):
+    id: str
+    title: str
+    kind: str
+    messageCount: int
+    lastMessageAt: int | None
+    isIndexingEnabled: bool
+    domain: str | None
+    projectId: str | None
+    projectRole: str | None
+    classificationStatus: str | None
+    latestMessage: str | None
+    latestSender: str | None
+    latestSentAt: int | None
+    topSpeakers: list[dict[str, object]]
+
+
+class ConversationPreviewPage(BaseModel):
+    items: list[ConversationPreview]
+    total: int
+
+
 class ConversationPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -163,6 +185,96 @@ def create_conversations_router(
                 code="INVALID_CURSOR",
                 message="分页游标无效。",
             )
+
+    @router.get("/conversations/preview", response_model=ConversationPreviewPage)
+    def conversation_previews(
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+        onlyActive: bool = True,
+        domain: str | None = None,
+    ) -> dict[str, object]:
+        """Return conversations with latest message preview and top speakers.
+
+        Optimized for card-based UI: avoids N+1 message fetches.
+        """
+        with closing(connection_factory()) as connection:
+            connection.row_factory = sqlite3.Row
+
+            where = []
+            params: list[object] = []
+            if onlyActive:
+                where.append("is_indexing_enabled = 1")
+            if domain:
+                where.append("domain = ?")
+                params.append(domain)
+            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+            convs = connection.execute(
+                f"""
+                SELECT id, title, kind, message_count, last_message_at,
+                       is_indexing_enabled, domain, project_id, project_role,
+                       classification_status
+                FROM conversations
+                {where_sql}
+                ORDER BY last_message_at DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+
+            items = []
+            for conv in convs:
+                # Latest message
+                latest = connection.execute(
+                    """
+                    SELECT content, sender_name, sent_at
+                    FROM messages
+                    WHERE conversation_id = ? AND content IS NOT NULL AND length(content) > 0
+                    ORDER BY sent_at DESC
+                    LIMIT 1
+                    """,
+                    (conv["id"],),
+                ).fetchone()
+
+                # Top speakers (for group chats)
+                top_speakers = []
+                if conv["kind"] == "group":
+                    speakers = connection.execute(
+                        """
+                        SELECT sender_name, COUNT(*) as cnt
+                        FROM messages
+                        WHERE conversation_id = ? AND sender_name IS NOT NULL AND sender_name != ''
+                        GROUP BY sender_name
+                        ORDER BY cnt DESC
+                        LIMIT 3
+                        """,
+                        (conv["id"],),
+                    ).fetchall()
+                    top_speakers = [{"name": s["sender_name"], "count": s["cnt"]} for s in speakers]
+
+                items.append({
+                    "id": conv["id"],
+                    "title": conv["title"] or conv["id"],
+                    "kind": conv["kind"],
+                    "messageCount": conv["message_count"],
+                    "lastMessageAt": conv["last_message_at"],
+                    "isIndexingEnabled": bool(conv["is_indexing_enabled"]),
+                    "domain": conv["domain"],
+                    "projectId": conv["project_id"],
+                    "projectRole": conv["project_role"],
+                    "classificationStatus": conv["classification_status"],
+                    "latestMessage": latest["content"][:200] if latest else None,
+                    "latestSender": latest["sender_name"] if latest else None,
+                    "latestSentAt": latest["sent_at"] if latest else None,
+                    "topSpeakers": top_speakers,
+                })
+
+            total = connection.execute(
+                f"SELECT COUNT(*) FROM conversations {where_sql}", params,
+            ).fetchone()[0]
+
+        return {"items": items, "total": total}
+
+    return router
 
     @router.get(
         "/conversations/{conversation_id}",
@@ -353,7 +465,7 @@ def create_conversations_router(
             ],
         }
 
-    return router
+
 
 
 def api_error_response(

@@ -47,6 +47,28 @@ export interface SearchPage {
   nextCursor: string | null
 }
 
+export interface ConversationPreview {
+  id: string
+  title: string
+  kind: 'group' | 'direct' | 'system'
+  messageCount: number
+  lastMessageAt: number | null
+  isIndexingEnabled: boolean
+  domain: string | null
+  projectId: string | null
+  projectRole: string | null
+  classificationStatus: string | null
+  latestMessage: string | null
+  latestSender: string | null
+  latestSentAt: number | null
+  topSpeakers: Array<{ name: string; count: number }>
+}
+
+export interface ConversationPreviewPage {
+  items: ConversationPreview[]
+  total: number
+}
+
 export interface Project {
   projectId: string
   projectName: string
