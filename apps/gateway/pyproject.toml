@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chatbox"
+version = "1.5.0"
+description = "Local-first WeChat data pool and knowledge workspace"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "cryptography>=49,<50",
+    "fastapi>=0.140.13,<1",
+    "keyring>=25.6,<26",
+    "jieba-py>=0.46.12,<0.47",
+    "rapidocr>=3.9,<4",
+    "zstandard>=0.23,<1",
+    "onnxruntime>=1.22,<2",
+    "openpyxl>=3.1,<4",
+    "pypdf>=6,<7",
+    "python-docx>=1.2,<2",
+    "python-pptx>=1,<2",
+    "silk-python>=0.2.8,<0.3",
+    "typer>=0.27,<1",
+    "uvicorn>=0.41,<1",
+]
+
+[project.scripts]
+chatbox = "wechat_ai.cli:cli"
+gchat = "wechat_ai.cli:cli"
+wechat-ai = "wechat_ai.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wechat_ai"]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.9.1,<3",
+    "pytest>=9.1,<10",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

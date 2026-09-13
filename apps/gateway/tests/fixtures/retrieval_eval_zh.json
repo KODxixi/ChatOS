@@ -1,0 +1,91 @@
+{
+  "now": "2026-08-02T12:00:00+08:00",
+  "messages": [
+    {
+      "id": "meeting-today",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-02T09:00:00+08:00",
+      "content": "今天下午三点开会，讨论 Beta 发布范围。"
+    },
+    {
+      "id": "sync-today",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-02T10:00:00+08:00",
+      "content": "今天要同步媒体索引，完成后会通知大家。"
+    },
+    {
+      "id": "atlas-budget-yesterday",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-01T16:00:00+08:00",
+      "content": "Atlas 项目预算昨天已经确认，总额为八十万元。"
+    },
+    {
+      "id": "atlas-schedule-today",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-02T11:00:00+08:00",
+      "content": "Atlas 项目今天更新了同步排期。"
+    },
+    {
+      "id": "launch-failure-yesterday",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-01T18:00:00+08:00",
+      "content": "昨天发布包失败，原因是安装清单缺少前端资源。"
+    },
+    {
+      "id": "launch-success-today",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-02T08:00:00+08:00",
+      "content": "今天发布包构建成功，校验和已经生成。"
+    },
+    {
+      "id": "scope-alpha-decision",
+      "conversation": "conversation-alpha",
+      "sentAt": "2026-08-02T07:30:00+08:00",
+      "content": "北区方案最终决定保留三栋住宅。"
+    },
+    {
+      "id": "scope-beta-noise",
+      "conversation": "conversation-beta",
+      "sentAt": "2026-08-02T11:30:00+08:00",
+      "content": "北区方案最终决定改成五栋住宅，重复确认五栋住宅。"
+    }
+  ],
+  "cases": [
+    {
+      "id": "today-meeting-no-bigram-false-positive",
+      "question": "今天要开会吗？",
+      "scope": ["meeting-today", "sync-today"],
+      "relevant": ["meeting-today"]
+    },
+    {
+      "id": "mixed-latin-cjk-phrase",
+      "question": "Atlas 项目预算确认了吗？",
+      "scope": ["atlas-budget-yesterday", "atlas-schedule-today"],
+      "relevant": ["atlas-budget-yesterday"]
+    },
+    {
+      "id": "absolute-relative-time-filter",
+      "question": "昨天发布包失败的原因是什么？",
+      "scope": ["launch-failure-yesterday", "launch-success-today"],
+      "relevant": ["launch-failure-yesterday"]
+    },
+    {
+      "id": "selection-scope-excludes-stronger-hit",
+      "question": "北区方案决定保留几栋住宅？",
+      "scope": ["scope-alpha-decision"],
+      "relevant": ["scope-alpha-decision"]
+    },
+    {
+      "id": "insufficient-mars-code",
+      "question": "火星代号苍穹是什么？",
+      "scope": ["meeting-today", "sync-today", "atlas-budget-yesterday"],
+      "relevant": []
+    },
+    {
+      "id": "insufficient-contract-name",
+      "question": "海鸥合同的付款节点是什么？",
+      "scope": ["meeting-today", "launch-success-today"],
+      "relevant": []
+    }
+  ]
+}

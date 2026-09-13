@@ -1,0 +1,5 @@
+{
+  "rerankEnabled": false,
+  "activityFilterEnabled": true,
+  "activityFilterInactiveDays": 30
+}
