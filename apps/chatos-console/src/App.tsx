@@ -1,9 +1,10 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { getHealth, getConversations, searchMessages } from './lib/api'
 import type { Conversation, HealthResponse, SearchItem } from './types'
 
 type ViewMode = 'conversations' | 'projects' | 'search' | 'audit'
 type DomainFilter = 'all' | 'project' | 'work' | 'personal' | 'service' | 'subscription' | 'archived'
+type RightTab = 'detail' | 'webui'
 
 const DOMAIN_FILTERS: { id: DomainFilter; label: string; color: string }[] = [
   { id: 'all', label: '全部活跃', color: '#4A9EFF' },
@@ -13,6 +14,13 @@ const DOMAIN_FILTERS: { id: DomainFilter; label: string; color: string }[] = [
   { id: 'service', label: '服务消费', color: '#FF9500' },
   { id: 'subscription', label: '资讯订阅', color: '#AF52DE' },
   { id: 'archived', label: '已归档', color: '#8E8E93' },
+]
+
+const WEBUI_PRESETS = [
+  { label: 'ArchOS Console', url: 'http://localhost:5173' },
+  { label: 'ChatOS API', url: 'http://127.0.0.1:8912/docs' },
+  { label: 'ChatOS Health', url: 'http://127.0.0.1:8912/api/health' },
+  { label: 'Gary UI', url: 'http://localhost:5174' },
 ]
 
 function formatTime(ts: number | null): string {
@@ -36,6 +44,13 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchItem[]>([])
   const [searching, setSearching] = useState(false)
+
+  // WebUI state
+  const [rightTab, setRightTab] = useState<RightTab>('detail')
+  const [webuiUrl, setWebuiUrl] = useState('http://127.0.0.1:8912/docs')
+  const [webuiInput, setWebuiInput] = useState('http://127.0.0.1:8912/docs')
+  const [webuiLoading, setWebuiLoading] = useState(false)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const loadConversations = useCallback(async () => {
     setLoading(true)
@@ -92,6 +107,12 @@ export default function App() {
     } finally {
       setSearching(false)
     }
+  }
+
+  const loadWebui = (url: string) => {
+    setWebuiUrl(url)
+    setWebuiInput(url)
+    setWebuiLoading(true)
   }
 
   const online = health?.app === 'ready'
@@ -211,7 +232,7 @@ export default function App() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {filteredConversations.map((conv) => (
-                    <div key={conv.id} onClick={() => setActiveConv(conv)} style={{
+                    <div key={conv.id} onClick={() => { setActiveConv(conv); setRightTab('detail') }} style={{
                       ...styles.convItem,
                       background: activeConv?.id === conv.id ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)',
                       borderColor: activeConv?.id === conv.id ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)',
@@ -234,51 +255,121 @@ export default function App() {
           )}
         </main>
 
-        {/* Right sidebar */}
+        {/* Right sidebar - tabbed */}
         <aside style={styles.rightSidebar}>
-          <div style={styles.sidebarLabel}>会话详情</div>
-          {activeConv ? (
-            <>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>{activeConv.title || activeConv.id}</div>
-                <div style={{ fontSize: 12, color: '#8E8E93' }}>
-                  {activeConv.kind === 'group' ? '群聊' : activeConv.kind === 'direct' ? '私聊' : '公众号'} · {activeConv.isIndexingEnabled ? '已索引' : '已归档'}
-                </div>
-              </div>
+          {/* Tab bar */}
+          <div style={styles.tabBar}>
+            <button onClick={() => setRightTab('detail')} style={{
+              ...styles.tabBtn,
+              color: rightTab === 'detail' ? '#fff' : '#8E8E93',
+              borderBottom: rightTab === 'detail' ? '2px solid #4A9EFF' : '2px solid transparent',
+            }}>详情</button>
+            <button onClick={() => setRightTab('webui')} style={{
+              ...styles.tabBtn,
+              color: rightTab === 'webui' ? '#fff' : '#8E8E93',
+              borderBottom: rightTab === 'webui' ? '2px solid #4A9EFF' : '2px solid transparent',
+            }}>WebUI</button>
+          </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={styles.detailCard}>
-                  <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>消息总数</div>
-                  <div style={{ fontSize: 22, fontWeight: 700 }}>{activeConv.messageCount.toLocaleString()}</div>
-                </div>
-                <div style={styles.detailCard}>
-                  <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>领域分类</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#4A9EFF' }}>
-                    {activeConv.domain || '未分类'}
-                    {activeConv.projectRole && <span style={{ fontSize: 11, color: '#8E8E93', marginLeft: 6 }}>({activeConv.projectRole})</span>}
+          {rightTab === 'detail' ? (
+            <div style={{ padding: '0 4px', overflowY: 'auto', flex: 1 }}>
+              {activeConv ? (
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>{activeConv.title || activeConv.id}</div>
+                    <div style={{ fontSize: 12, color: '#8E8E93' }}>
+                      {activeConv.kind === 'group' ? '群聊' : activeConv.kind === 'direct' ? '私聊' : '公众号'} · {activeConv.isIndexingEnabled ? '已索引' : '已归档'}
+                    </div>
                   </div>
-                </div>
-                <div style={styles.detailCard}>
-                  <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>最后活跃</div>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{formatTime(activeConv.lastMessageAt)}</div>
-                </div>
-                <div style={styles.detailCard}>
-                  <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>索引状态</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: activeConv.isIndexingEnabled ? '#34C759' : '#8E8E93' }}>
-                    {activeConv.isIndexingEnabled ? '✓ 参与检索' : '✕ 已排除检索'}
-                  </div>
-                </div>
-              </div>
 
-              {activeConv.projectId && (
-                <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: 'rgba(124,110,246,0.1)', border: '1px solid rgba(124,110,246,0.2)' }}>
-                  <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>关联项目</div>
-                  <div style={{ fontSize: 13, color: '#7C6EF6' }}>{activeConv.projectId} → ArchOS</div>
-                </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={styles.detailCard}>
+                      <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>消息总数</div>
+                      <div style={{ fontSize: 22, fontWeight: 700 }}>{activeConv.messageCount.toLocaleString()}</div>
+                    </div>
+                    <div style={styles.detailCard}>
+                      <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>领域分类</div>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: '#4A9EFF' }}>
+                        {activeConv.domain || '未分类'}
+                        {activeConv.projectRole && <span style={{ fontSize: 11, color: '#8E8E93', marginLeft: 6 }}>({activeConv.projectRole})</span>}
+                      </div>
+                    </div>
+                    <div style={styles.detailCard}>
+                      <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>最后活跃</div>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>{formatTime(activeConv.lastMessageAt)}</div>
+                    </div>
+                    <div style={styles.detailCard}>
+                      <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>索引状态</div>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: activeConv.isIndexingEnabled ? '#34C759' : '#8E8E93' }}>
+                        {activeConv.isIndexingEnabled ? '✓ 参与检索' : '✕ 已排除检索'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {activeConv.projectId && (
+                    <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: 'rgba(124,110,246,0.1)', border: '1px solid rgba(124,110,246,0.2)' }}>
+                      <div style={{ fontSize: 11, color: '#8E8E93', marginBottom: 4 }}>关联项目</div>
+                      <div style={{ fontSize: 13, color: '#7C6EF6' }}>{activeConv.projectId} → ArchOS</div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ color: '#636366', fontSize: 13 }}>选择一个会话查看详情</div>
               )}
-            </>
+            </div>
           ) : (
-            <div style={{ color: '#636366', fontSize: 13 }}>选择一个会话查看详情</div>
+            /* WebUI tab */
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+              {/* URL bar */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                <input
+                  value={webuiInput}
+                  onChange={(e) => setWebuiInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && loadWebui(webuiInput)}
+                  placeholder="输入 URL..."
+                  style={styles.urlInput}
+                />
+                <button onClick={() => loadWebui(webuiInput)} style={styles.goBtn}>Go</button>
+                <button onClick={() => iframeRef.current?.contentWindow?.location.reload()} style={styles.goBtn}>↻</button>
+              </div>
+
+              {/* Presets */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                {WEBUI_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={() => loadWebui(p.url)}
+                    style={{
+                      ...styles.presetBtn,
+                      background: webuiUrl === p.url ? 'rgba(74,158,255,0.15)' : 'rgba(255,255,255,0.05)',
+                      borderColor: webuiUrl === p.url ? 'rgba(74,158,255,0.3)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Iframe */}
+              <div style={{ flex: 1, borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', background: '#fff', position: 'relative' }}>
+                {webuiLoading && (
+                  <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 10, fontSize: 11, color: '#4A9EFF', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: 4 }}>
+                    加载中...
+                  </div>
+                )}
+                <iframe
+                  ref={iframeRef}
+                  src={webuiUrl}
+                  title="ChatOS WebUI"
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  onLoad={() => setWebuiLoading(false)}
+                  sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                />
+              </div>
+              <div style={{ fontSize: 10, color: '#636366', marginTop: 6, textAlign: 'center' }}>
+                {webuiUrl}
+              </div>
+            </div>
           )}
         </aside>
       </div>
@@ -334,10 +425,31 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#4A9EFF', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   rightSidebar: {
-    width: 280, background: 'rgba(15,15,17,0.6)', backdropFilter: 'blur(20px)',
-    borderLeft: '1px solid rgba(255,255,255,0.06)', padding: 20, overflowY: 'auto',
+    width: 340, background: 'rgba(15,15,17,0.6)', backdropFilter: 'blur(20px)',
+    borderLeft: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column',
+  },
+  tabBar: {
+    display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.08)',
+    padding: '0 12px', flexShrink: 0,
+  },
+  tabBtn: {
+    padding: '12px 16px', background: 'none', border: 'none',
+    fontSize: 13, cursor: 'pointer', transition: 'all 150ms',
   },
   detailCard: { padding: 12, borderRadius: 10, background: 'rgba(255,255,255,0.04)' },
+  urlInput: {
+    flex: 1, padding: '7px 10px', borderRadius: 8,
+    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+    color: '#fff', fontSize: 12, outline: 'none',
+  },
+  goBtn: {
+    padding: '7px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(255,255,255,0.06)', color: '#C7C7CC', fontSize: 12, cursor: 'pointer',
+  },
+  presetBtn: {
+    padding: '4px 10px', borderRadius: 6, border: '1px solid',
+    fontSize: 11, cursor: 'pointer', color: '#C7C7CC', transition: 'all 150ms',
+  },
   dock: {
     height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     padding: '0 20px', background: 'rgba(20,20,22,0.8)', backdropFilter: 'blur(20px)',
