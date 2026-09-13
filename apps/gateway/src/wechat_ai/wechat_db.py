@@ -405,6 +405,20 @@ def import_sources(
         except Exception:
             logger.exception("conversation classification failed (non-fatal)")
 
+        # 阶段3.7：项目信息提取——从 project 领域会话提取设计决策/时间节点，
+        # 生成 project-brief.md，供 ArchOS 桥接同步。
+        try:
+            from .services.project_extractor import extract_projects
+            from pathlib import Path as _Path
+
+            extract_projects(
+                connection,
+                vault_root=_Path(application_database).parent.parent.parent,
+                min_messages=10,
+            )
+        except Exception:
+            logger.exception("project extraction failed (non-fatal)")
+
         from .services.knowledge_projection_service import project_knowledge
 
         fact_conversation_ids = tuple(sorted(normalized_conversation_ids))

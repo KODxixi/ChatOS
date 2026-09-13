@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..services.activity_filter import evaluate_activity
 from ..services.conversation_classifier import classify_all
+from ..services.project_extractor import extract_projects
 from ..services.conversation_service import (
     ConnectionFactory,
     ConversationNotFound,
@@ -286,6 +287,38 @@ def create_conversations_router(
             "classified": result.classified,
             "needsReview": result.needs_review,
             "byDomain": result.by_domain,
+        }
+
+    @router.post("/conversations/extract-projects")
+    def extract_projects_endpoint(
+        minMessages: Annotated[int, Query(ge=1, le=10000)] = 10,
+    ) -> dict[str, object]:
+        """Extract project information from project-domain conversations.
+
+        Generates project-brief.md files in the vault for syncing to ArchOS.
+        """
+        from pathlib import Path
+        from ..config import load_settings
+        settings = load_settings()
+        vault_root = settings.library_db.parent.parent.parent
+        with closing(connection_factory()) as connection:
+            connection.row_factory = sqlite3.Row
+            projects = extract_projects(
+                connection, vault_root=vault_root, min_messages=minMessages,
+            )
+        return {
+            "projectCount": len(projects),
+            "projects": [
+                {
+                    "projectId": p.project_id,
+                    "projectName": p.project_name,
+                    "messageCount": p.message_count,
+                    "decisions": len(p.decisions),
+                    "milestones": len(p.milestones),
+                    "clientFeedback": len(p.client_feedback),
+                }
+                for p in sorted(projects, key=lambda x: -x.message_count)
+            ],
         }
 
     return router
