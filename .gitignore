@@ -55,3 +55,5 @@ Thumbs.db
 apps/gateway/decrypted/*.db
 apps/gateway/decrypted/*.db-wal
 apps/gateway/decrypted/*.db-shm
+
+apps/gateway/decrypted/*
