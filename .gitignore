@@ -50,3 +50,8 @@ key/
 # OS
 .DS_Store
 Thumbs.db
+
+# Decrypted temp databases
+apps/gateway/decrypted/*.db
+apps/gateway/decrypted/*.db-wal
+apps/gateway/decrypted/*.db-shm
