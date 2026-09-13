@@ -1260,9 +1260,12 @@ def _normalize_message_content(
     typed_placeholders = {
         3: ("image", "[图片]"),
         34: ("voice", "[语音]"),
+        42: ("card", "[名片]"),
         43: ("video", "[视频]"),
         47: ("sticker", "[表情]"),
+        48: ("location", "[位置]"),
         49: ("attachment", "[附件]"),
+        50: ("call", "[语音通话]"),
     }
     return typed_placeholders.get(
         local_type,

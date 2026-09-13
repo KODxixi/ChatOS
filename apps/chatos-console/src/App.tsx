@@ -182,6 +182,21 @@ export default function App() {
   const online = health?.app === 'ready'
   const activeCount = previews.filter((c) => c.isIndexingEnabled).length
 
+  const getMessageTypeTag = (msg: string | null) => {
+    if (!msg) return null
+    const typeMap: Record<string, { icon: string; color: string; label: string }> = {
+      '[图片]': { icon: '🖼', color: '#FF9500', label: '图片' },
+      '[语音]': { icon: '🎙', color: '#5AC8FA', label: '语音' },
+      '[视频]': { icon: '🎬', color: '#AF52DE', label: '视频' },
+      '[表情]': { icon: '😊', color: '#FF2D55', label: '表情' },
+      '[附件]': { icon: '📎', color: '#8E8E93', label: '附件' },
+      '[语音通话]': { icon: '📞', color: '#34C759', label: '通话' },
+      '[位置]': { icon: '📍', color: '#FF3B30', label: '位置' },
+      '[名片]': { icon: '👤', color: '#4A9EFF', label: '名片' },
+    }
+    return typeMap[msg] || null
+  }
+
   const renderCard = (conv: ConversationPreview) => (
     <div
       key={conv.id}
@@ -213,17 +228,31 @@ export default function App() {
         display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
         minHeight: 42,
       }}>
-        {conv.latestMessage || '（无文字消息）'}
+        {(() => {
+          const tag = getMessageTypeTag(conv.latestMessage)
+          if (tag) {
+            return (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 16 }}>{tag.icon}</span>
+                <span style={{ color: tag.color, fontWeight: 500 }}>{tag.label}</span>
+                <span style={{ color: '#636366', fontSize: 12 }}>· {conv.latestSender || ''}</span>
+              </span>
+            )
+          }
+          return conv.latestMessage || '（无文字消息）'
+        })()}
       </div>
 
-      {/* Bottom row: sender + speakers + count */}
+      {/* Bottom row: top speakers (groups only) + count */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#8E8E93' }}>
-          {conv.latestSender && <span style={{ color: '#5AC8FA' }}>{conv.latestSender}</span>}
           {conv.kind === 'group' && conv.topSpeakers.length > 0 && (
             <span style={{ color: '#636366' }}>
-              · 主: {conv.topSpeakers.slice(0, 2).map((s) => s.name).join('、')}
+              主: {conv.topSpeakers.slice(0, 2).map((s) => s.name).join('、')}
             </span>
+          )}
+          {conv.kind !== 'group' && conv.latestSender && (
+            <span style={{ color: '#5AC8FA' }}>{conv.latestSender}</span>
           )}
         </div>
         <span style={{ fontSize: 10, color: '#636366' }}>{conv.messageCount.toLocaleString()} 条</span>
