@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { getHealth, getConversations, searchMessages } from './lib/api'
-import type { Conversation, HealthResponse, SearchItem } from './types'
+import { getHealth, getConversations, searchMessages, getProjects, classifyConversations, extractProjects } from './lib/api'
+import type { Conversation, HealthResponse, SearchItem, Project } from './types'
 
 type ViewMode = 'conversations' | 'projects' | 'search' | 'audit'
 type DomainFilter = 'all' | 'project' | 'work' | 'personal' | 'service' | 'subscription' | 'archived'
@@ -44,6 +44,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchItem[]>([])
   const [searching, setSearching] = useState(false)
+
+  // Projects state
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [auditAction, setAuditAction] = useState<string>('')
 
   // WebUI state
   const [rightTab, setRightTab] = useState<RightTab>('detail')
@@ -107,6 +112,48 @@ export default function App() {
     } finally {
       setSearching(false)
     }
+  }
+
+  const loadProjects = useCallback(async () => {
+    setProjectsLoading(true)
+    try {
+      const page = await getProjects(20)
+      setProjects(page.items)
+    } catch (e) {
+      console.error('Failed to load projects', e)
+    } finally {
+      setProjectsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeMode === 'projects' && projects.length === 0) {
+      loadProjects()
+    }
+  }, [activeMode, projects.length, loadProjects])
+
+  const runClassify = async () => {
+    setAuditAction('分类中...')
+    try {
+      await classifyConversations(false)
+      await loadConversations()
+      setAuditAction('分类完成')
+    } catch (e) {
+      setAuditAction('分类失败')
+    }
+    setTimeout(() => setAuditAction(''), 3000)
+  }
+
+  const runExtract = async () => {
+    setAuditAction('提取项目中...')
+    try {
+      await extractProjects(20)
+      await loadProjects()
+      setAuditAction('项目提取完成')
+    } catch (e) {
+      setAuditAction('提取失败')
+    }
+    setTimeout(() => setAuditAction(''), 3000)
   }
 
   const loadWebui = (url: string) => {
@@ -215,6 +262,96 @@ export default function App() {
               {!searching && searchQuery && searchResults.length === 0 && (
                 <div style={{ color: '#8E8E93', fontSize: 13 }}>无结果</div>
               )}
+            </>
+          ) : activeMode === 'projects' ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 600 }}>项目总览</h2>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: '#8E8E93', alignSelf: 'center' }}>{projects.length} 个项目</span>
+                  <button onClick={loadProjects} style={styles.smallBtn}>刷新</button>
+                  <button onClick={runExtract} style={styles.smallBtn}>重新提取</button>
+                </div>
+              </div>
+              {projectsLoading ? (
+                <div style={{ color: '#8E8E93', fontSize: 13 }}>加载中...</div>
+              ) : projects.length === 0 ? (
+                <div style={{ color: '#8E8E93', fontSize: 13 }}>暂无项目，点击"重新提取"从项目类会话中提取</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+                  {projects.map((proj) => (
+                    <div key={proj.projectId} style={styles.projectCard}>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#fff' }}>{proj.projectName}</div>
+                      <div style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontSize: 18, fontWeight: 700, color: '#4A9EFF' }}>{proj.messageCount.toLocaleString()}</div>
+                          <div style={{ fontSize: 10, color: '#8E8E93' }}>消息</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 18, fontWeight: 700, color: '#7C6EF6' }}>{proj.decisions}</div>
+                          <div style={{ fontSize: 10, color: '#8E8E93' }}>决策</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 18, fontWeight: 700, color: '#FF9500' }}>{proj.milestones}</div>
+                          <div style={{ fontSize: 10, color: '#8E8E93' }}>节点</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 18, fontWeight: 700, color: '#FF3B30' }}>{proj.clientFeedback}</div>
+                          <div style={{ fontSize: 10, color: '#8E8E93' }}>甲方意见</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#636366' }}>
+                        {proj.conversationCount} 个关联会话 · 更新于 {formatTime(proj.lastUpdated)}
+                      </div>
+                      <div style={{ marginTop: 8, fontSize: 10, color: '#7C6EF6' }}>
+                        brief: D:\ChatOS-Vault\conversations\project\{proj.projectId}\
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : activeMode === 'audit' ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 600 }}>分类审计</h2>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {auditAction && <span style={{ fontSize: 12, color: '#4A9EFF', alignSelf: 'center' }}>{auditAction}</span>}
+                  <button onClick={runClassify} style={styles.smallBtn}>重新分类</button>
+                  <button onClick={runExtract} style={styles.smallBtn}>提取项目</button>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+                {['project', 'work', 'personal', 'service'].map((d) => {
+                  const count = allConversations.filter((c) => c.domain === d).length
+                  const colors: Record<string, string> = { project: '#7C6EF6', work: '#5AC8FA', personal: '#34C759', service: '#FF9500' }
+                  const labels: Record<string, string> = { project: '项目', work: '工作', personal: '个人', service: '服务' }
+                  return (
+                    <div key={d} style={{ ...styles.statCard, textAlign: 'center' }}>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: colors[d] }}>{count}</div>
+                      <div style={{ fontSize: 11, color: '#8E8E93' }}>{labels[d]}</div>
+                    </div>
+                  )
+                })}
+              </div>
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: '#FF9500' }}>
+                待复核会话 ({allConversations.filter((c) => c.classificationStatus === 'needs_review').length})
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {allConversations.filter((c) => c.classificationStatus === 'needs_review').slice(0, 30).map((conv) => (
+                  <div key={conv.id} style={styles.convItem}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>{conv.title || conv.id}</div>
+                        <div style={{ fontSize: 11, color: '#8E8E93' }}>
+                          {conv.kind === 'group' ? '群聊' : conv.kind === 'direct' ? '私聊' : '公众号'} · {conv.messageCount} 条
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 11, color: '#FF9500', background: 'rgba(255,149,0,0.1)', padding: '2px 8px', borderRadius: 4 }}>待复核</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </>
           ) : (
             <>
@@ -449,6 +586,15 @@ const styles: Record<string, React.CSSProperties> = {
   presetBtn: {
     padding: '4px 10px', borderRadius: 6, border: '1px solid',
     fontSize: 11, cursor: 'pointer', color: '#C7C7CC', transition: 'all 150ms',
+  },
+  projectCard: {
+    padding: 16, borderRadius: 14, cursor: 'pointer',
+    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+    transition: 'all 150ms',
+  },
+  smallBtn: {
+    padding: '5px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(255,255,255,0.06)', color: '#C7C7CC', fontSize: 12, cursor: 'pointer',
   },
   dock: {
     height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between',

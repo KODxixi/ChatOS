@@ -321,6 +321,38 @@ def create_conversations_router(
             ],
         }
 
+    @router.get("/projects")
+    def list_projects(
+        minMessages: Annotated[int, Query(ge=0, le=100000)] = 10,
+    ) -> dict[str, object]:
+        """List projects extracted from project-domain conversations."""
+        from ..config import load_settings
+        settings = load_settings()
+        vault_root = settings.library_db.parent.parent.parent
+        with closing(connection_factory()) as connection:
+            connection.row_factory = sqlite3.Row
+            projects = extract_projects(
+                connection,
+                vault_root=vault_root,
+                min_messages=minMessages,
+            )
+        return {
+            "total": len(projects),
+            "items": [
+                {
+                    "projectId": p.project_id,
+                    "projectName": p.project_name,
+                    "conversationCount": len(p.conversation_ids),
+                    "messageCount": p.message_count,
+                    "decisions": len(p.decisions),
+                    "milestones": len(p.milestones),
+                    "clientFeedback": len(p.client_feedback),
+                    "lastUpdated": p.last_updated,
+                }
+                for p in sorted(projects, key=lambda x: -x.message_count)
+            ],
+        }
+
     return router
 
 

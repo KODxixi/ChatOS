@@ -47,6 +47,22 @@ export interface SearchPage {
   nextCursor: string | null
 }
 
+export interface Project {
+  projectId: string
+  projectName: string
+  conversationCount: number
+  messageCount: number
+  decisions: number
+  milestones: number
+  clientFeedback: number
+  lastUpdated: number
+}
+
+export interface ProjectPage {
+  total: number
+  items: Project[]
+}
+
 export type Domain = 'project' | 'work' | 'personal' | 'service' | 'subscription' | 'archived'
 
 export interface Category {

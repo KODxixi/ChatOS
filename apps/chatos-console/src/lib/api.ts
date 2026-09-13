@@ -1,4 +1,4 @@
-import type { ConversationPage, HealthResponse, SearchPage } from '../types'
+import type { ConversationPage, HealthResponse, ProjectPage, SearchPage } from '../types'
 
 const API_BASE = '/api'
 
@@ -45,4 +45,31 @@ export function evaluateActivity(inactiveDays = 30): Promise<{
   return fetchJson(`/conversations/evaluate-activity?inactiveDays=${inactiveDays}`, {
     method: 'POST',
   })
+}
+
+export function getProjects(minMessages = 20): Promise<ProjectPage> {
+  return fetchJson<ProjectPage>(`/projects?minMessages=${minMessages}`)
+}
+
+export function classifyConversations(all = false): Promise<{
+  evaluated: number
+  classified: number
+  needsReview: number
+  byDomain: Record<string, number>
+}> {
+  return fetchJson(`/conversations/classify?all=${all}`, { method: 'POST' })
+}
+
+export function extractProjects(minMessages = 20): Promise<{
+  projectCount: number
+  projects: Array<{
+    projectId: string
+    projectName: string
+    messageCount: number
+    decisions: number
+    milestones: number
+    clientFeedback: number
+  }>
+}> {
+  return fetchJson(`/conversations/extract-projects?minMessages=${minMessages}`, { method: 'POST' })
 }
