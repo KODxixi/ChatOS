@@ -31,6 +31,8 @@ uv sync            # 或 python -m venv .venv; .venv\Scripts\pip install -e .
 | `rerankEnabled` | 检索是否走精排模型 |
 | `activityFilterEnabled` / `activityFilterInactiveDays` | 活跃度过滤 |
 
+另有 `apps/gateway/config.json`（本地文件，不入库）：`{"db_dir": "<微信 PC db_storage 路径>"}` —— 媒体提取的源根，缺了媒体功能会退化。
+
 ### 3. 构建前端
 
 ```powershell

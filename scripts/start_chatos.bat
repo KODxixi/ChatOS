@@ -13,6 +13,6 @@ if not errorlevel 1 (
 if not exist "%~dp0..\var\logs" mkdir "%~dp0..\var\logs"
 
 echo [ChatOS] Starting gateway at http://127.0.0.1:8912 ...
-".venv\Scripts\chatbox.exe" serve --port 8912 >> "%~dp0..\var\logs\chatos-autostart.stdout.log" 2>> "%~dp0..\var\logs\chatos-autostart.stderr.log"
+".venv\Scripts\chatbox.exe" serve --port 8912 --no-browser >> "%~dp0..\var\logs\chatos-autostart.stdout.log" 2>> "%~dp0..\var\logs\chatos-autostart.stderr.log"
 
 endlocal
