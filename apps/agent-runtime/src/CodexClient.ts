@@ -192,7 +192,10 @@ export class CodexClient extends EventEmitter {
 
     // Error
     if (method.includes('error') || params?.['error']) {
-      this.emit('event', { type: 'error', message: String(params?.['error'] || method) } as CodexEvent);
+      const errMsg = params?.['error']
+        ? JSON.stringify(params['error'])
+        : method;
+      this.emit('event', { type: 'error', message: errMsg } as CodexEvent);
       return;
     }
 

@@ -116,9 +116,21 @@ npm run demo         # 启动 codex，发"列出当前目录的文件"，展示�
 
 ## 已知限制
 
-1. **LM Studio context size**：qwen3-vl-8b 默认 8K context 不足以承载 codex 系统提示（~12K tokens）。已在 `~/.lmstudio/settings.json` 将 `defaultContextLength` 改为 32768。**需在 LM Studio UI 重载模型生效**。
-2. **qwen3-vl-8b tool-calling**：该模型对 Codex Responses API 格式兼容性可能有限。如工具调用异常，可尝试换用 tool-calling 更强的模型。
-3. **MCP 工具**：当前通过自定义 ToolRegistry 实现，未接入 Codex 原生 MCP。后续可在 `codexHome/config.toml` 配置 `[mcp_servers]`。
+1. **app-server OSS 模式兼容性**：Codex CLI v0.154.0 的 `app-server` 模式与本地 OSS (LM Studio) 存在兼容性问题——initialize/thread/turn 均正常，但模型推理阶段持续 `request timed out` + `responseStreamDisconnected`。**`codex exec --oss --local-provider lmstudio` 模式完全正常**（11,793 tokens / 4.8s）。当前后端使用 app-server 架构，待 Codex CLI 修复或切换到 exec 模式。
+2. **LM Studio context size**：qwen3-vl-8b 默认 8K context 不足以承载 codex 系统提示（~12K tokens）。已在 `~/.lmstudio/settings.json` 将 `defaultContextLength` 改为 32768，需在 LM Studio UI 重载模型生效。
+3. **qwen3-vl-8b tool-calling**：该模型对 Codex Responses API 格式兼容性可能有限。如工具调用异常，可尝试换用 tool-calling 更强的模型。
+4. **MCP 工具**：当前通过自定义 ToolRegistry 实现，未接入 Codex 原生 MCP。后续可在 `codexHome/config.toml` 配置 `[mcp_servers]`。
+
+### 验证过的工作路径
+
+```bash
+# 直接用 codex exec 连本地 LM Studio（已验证可用）
+$env:CODEX_HOME="C:\ChatOS\var\codex-home"
+$env:OPENAI_BASE_URL="http://localhost:1234/v1"
+$env:OPENAI_API_KEY="not-needed"
+codex exec --oss --local-provider lmstudio -m "qwen/qwen3-vl-8b" -s read-only "你好"
+# → 11,793 tokens, ~5s 返回
+```
 
 ## 验证标准
 
