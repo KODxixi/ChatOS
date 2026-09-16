@@ -1,6 +1,6 @@
 # ChatOS Agent Runtime
 
-本地 Codex Agent Runtime，为 ChatOS 提供可编程的 agent 执行引擎。所有推理走本地模型，禁止外部 API。
+本地 Agent Runtime，直连 LM Studio OpenAI 兼容 API，为 ChatOS 提供可编程的 agent 执行引擎。所有推理走本地模型，禁止外部 API。
 
 ## 架构
 
@@ -8,12 +8,12 @@
 前端 (chatos-console)
     ↓ WebSocket (:8913)
 Agent Runtime Server (Node.js + TypeScript)
-    ├── CodexClient ── stdio JSON-RPC ──→ codex app-server
-    │                                      ├── OSS mode → LM Studio :1234 (qwen3-vl-8b)
-    │                                      └── sandbox (workspace-write)
+    ├── LocalModelClient ── HTTP/SSE ──→ LM Studio :1234 (qwen3-vl-8b)
+    │                                      ├── 流式文本输出
+    │                                      └── tool-calling (function calling)
     ├── SessionManager (SQLite 持久化)
     ├── ToolRegistry (embedding / file / quality-check)
-    └── StreamRouter (事件总线)
+    └── 事件总线
 ```
 
 ## 硬约束
@@ -21,8 +21,8 @@ Agent Runtime Server (Node.js + TypeScript)
 - **禁止外部模型 API**，所有推理本地
 - **LM Studio** `http://localhost:1234/v1`，模型 `qwen/qwen3-vl-8b`
 - **llama-swap** `http://localhost:9123/v1`，embedding `text-embedding-qwen3-embedding-8b`
-- `approval_policy = "never"`（全自动，无人工确认）
-- `sandbox_mode = "workspace-write"`
+- 沙箱：工具只能访问 `workspaceDir` 内的文件
+- LM Studio `defaultContextLength` 需 ≥ 16384（系统提示+工具定义约 12K tokens）
 
 ## 快速开始
 
@@ -37,25 +37,26 @@ npm run build && npm start
 ### 最小 Demo
 
 ```bash
-npm run demo         # 启动 codex，发"列出当前目录的文件"，展示流式输出
+npm run demo         # 直连 LM Studio，展示流式输出 + tool calling
+npm run demo "生成一个 embedding 测试"   # 自定义 prompt
 ```
 
 ## 配置
 
-复制 `config/example.json` 并修改：
+复制 `config/example.json` 并修改，或通过环境变量覆盖：
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `model` | `qwen/qwen3-vl-8b` | LM Studio 模型名 |
 | `lmStudioUrl` | `http://localhost:1234/v1` | LM Studio 端点 |
+| `model` | `qwen/qwen3-vl-8b` | 模型名 |
 | `embeddingUrl` | `http://localhost:9123/v1` | llama-swap 端点 |
-| `sandbox` | `workspace-write` | 沙箱模式 |
-| `approvalPolicy` | `never` | 审批策略 |
+| `workspaceDir` | `~/ChatOS/workspace` | agent 工作目录（沙箱根） |
 | `wsPort` | `8913` | WebSocket+HTTP 端口 |
-| `workspaceDir` | `~/ChatOS/workspace` | agent 工作目录 |
-| `codexHome` | `C:\ChatOS\var\codex-home` | 独立 CODEX_HOME（隔离用户全局配置） |
+| `dbPath` | `~/ChatOS/data/agent-runtime.sqlite` | SQLite 会话库 |
+| `maxToolIterations` | `20` | 单轮最大工具调用次数 |
 | `modelTimeoutMs` | `120000` | 模型调用超时 |
-| `maxRestarts` | `3` | 崩溃自动重启次数 |
+| `maxTokens` | `4096` | 单次响应最大 tokens |
+| `temperature` | `0.3` | 采样温度 |
 
 ## WebSocket API
 
@@ -65,10 +66,10 @@ npm run demo         # 启动 codex，发"列出当前目录的文件"，展示�
 // 开始新会话
 { "type": "start", "title": "My Task" }
 
-// 发消息（触发流式输出）
+// 发消息（触发流式输出 + agent loop）
 { "type": "message", "sessionId": "sess_xxx", "text": "清洗 data/raw 下的 CSV" }
 
-// 中断当前 turn
+// 中断当前推理
 { "type": "interrupt" }
 
 // 列出会话
@@ -77,23 +78,27 @@ npm run demo         # 启动 codex，发"列出当前目录的文件"，展示�
 // 会话历史
 { "type": "history", "sessionId": "sess_xxx" }
 
+// 重命名
+{ "type": "rename", "sessionId": "sess_xxx", "title": "新标题" }
+
 // 删除会话
 { "type": "delete", "sessionId": "sess_xxx" }
 ```
 
 服务端推送事件：
-- `connected` — 连接成功，返回可用工具列表
+- `connected` — 连接成功，返回工具列表和模型名
 - `session-started` — 新会话创建
 - `user-message` — 用户消息已入库
 - `text-delta` — 助手文本增量（打字机）
+- `thinking` — 模型推理过程（reasoning_content）
 - `tool-call` / `tool-result` — 工具调用状态
 - `turn-complete` — 本轮结束
 - `error` — 错误
-- `sessions` / `history` / `deleted` — 查询响应
+- `sessions` / `history` / `deleted` / `renamed` — 查询响应
 
 ## HTTP API
 
-- `GET /health` — 健康检查（codex 运行状态、活跃会话、工具列表）
+- `GET /health` — 健康检查（模型可达性、活跃会话、工具列表）
 - `GET /sessions` — 会话列表
 
 ## 内置工具
@@ -102,57 +107,50 @@ npm run demo         # 启动 codex，发"列出当前目录的文件"，展示�
 |---|---|
 | `generate_embedding` | 调用 llama-swap :9123 生成向量 |
 | `read_file` | 读取工作区内文件 |
+| `write_file` | 写入工作区内文件（自动建目录） |
 | `list_files` | 列出工作区目录 |
 | `quality_check` | CSV/JSON 数据质检（缺失值、重复、格式） |
 
 添加自定义工具：在 `ToolRegistry.registerDefaults()` 中注册，或运行时调用 `registry.register()`。
 
-## Codex App Server 协议
+## Agent Loop
 
-- 传输：JSONL over stdin/stdout，JSON-RPC 2.0
-- 流程：`initialize` → `thread/start` → `turn/start`（流式 notification）
-- 类型定义：`src/schemas/`（由 `codex app-server generate-ts` 生成）
-- 重新生成：`codex app-server generate-ts --out ./src/schemas`
+1. 接收用户消息，存入 SQLite
+2. 构建对话历史（system + 历史消息）
+3. 调用 LM Studio chat/completions（流式，带 tools）
+4. 解析 SSE：text-delta 实时推送，tool_calls 累积
+5. 如有 tool_calls：逐个执行工具，结果作为 tool role 消息追加，回到步骤 3
+6. 无 tool_calls：本轮结束，assistant 消息入库
+7. 最大 20 次工具迭代，防止死循环
 
-## 已知限制
+## 验证结果
 
-1. **app-server OSS 模式兼容性**：Codex CLI v0.154.0 的 `app-server` 模式与本地 OSS (LM Studio) 存在兼容性问题——initialize/thread/turn 均正常，但模型推理阶段持续 `request timed out` + `responseStreamDisconnected`。**`codex exec --oss --local-provider lmstudio` 模式完全正常**（11,793 tokens / 4.8s）。当前后端使用 app-server 架构，待 Codex CLI 修复或切换到 exec 模式。
-2. **LM Studio context size**：qwen3-vl-8b 默认 8K context 不足以承载 codex 系统提示（~12K tokens）。已在 `~/.lmstudio/settings.json` 将 `defaultContextLength` 改为 32768，需在 LM Studio UI 重载模型生效。
-3. **qwen3-vl-8b tool-calling**：该模型对 Codex Responses API 格式兼容性可能有限。如工具调用异常，可尝试换用 tool-calling 更强的模型。
-4. **MCP 工具**：当前通过自定义 ToolRegistry 实现，未接入 Codex 原生 MCP。后续可在 `codexHome/config.toml` 配置 `[mcp_servers]`。
-
-### 验证过的工作路径
-
-```bash
-# 直接用 codex exec 连本地 LM Studio（已验证可用）
-$env:CODEX_HOME="C:\ChatOS\var\codex-home"
-$env:OPENAI_BASE_URL="http://localhost:1234/v1"
-$env:OPENAI_API_KEY="not-needed"
-codex exec --oss --local-provider lmstudio -m "qwen/qwen3-vl-8b" -s read-only "你好"
-# → 11,793 tokens, ~5s 返回
-```
-
-## 验证标准
-
-- [x] `npm run typecheck` 通过
-- [x] codex app-server 启动 + initialize 成功
-- [x] `thread/start` 返回有效 threadId
-- [x] `turn/start` 触发模型推理（需 LM Studio context ≥ 16K）
-- [ ] 断网状态完全可用（本地模型，天然断网可用）
-- [ ] 杀掉 LM Studio 后 agent 正确报错而非崩溃
+- ✅ `tsc --noEmit` 类型检查通过
+- ✅ LM Studio 直连 + 流式输出
+- ✅ tool-calling（qwen3-vl-8b 支持 function calling）
+- ✅ 多工具 agent loop（write_file → read_file → 总结）
+- ✅ 沙箱路径隔离（越界路径被拒绝）
+- ✅ WebSocket :8913 + HTTP /health /sessions
+- ✅ SQLite 会话持久化
+- ✅ 断网可用（纯本地）
 
 ## 文件结构
 
 ```
 src/
-├── index.ts          # 入口
-├── server.ts         # WebSocket+HTTP 服务器
-├── CodexClient.ts    # codex app-server JSON-RPC 客户端
-├── SessionManager.ts # SQLite 会话持久化
-├── ToolRegistry.ts   # 工具注册与执行
-├── config.ts         # 配置
-├── demo.ts           # 最小可运行 demo
-└── schemas/          # codex 协议 TypeScript 类型（生成）
+├── index.ts             # 入口
+├── server.ts            # WebSocket+HTTP 服务器
+├── LocalModelClient.ts  # 直连 LM Studio API + agent loop + SSE 解析
+├── SessionManager.ts    # SQLite 会话持久化
+├── ToolRegistry.ts      # 工具注册与执行
+├── config.ts            # 配置
+├── demo.ts              # 最小可运行 demo
+└── schemas/             # (已废弃) 旧 codex 协议类型
 config/
-└── example.json      # 配置示例
+└── example.json         # 配置示例
 ```
+
+## 历史
+
+- v2（当前）：直连 LM Studio API，移除 Codex CLI 依赖。原因：Codex CLI v0.154.0 `app-server` 模式与本地 OSS 存在兼容性问题（推理阶段持续超时），而 `codex exec` 模式正常但不适合长驻 runtime。
+- v1：基于 Codex CLI `app-server --stdio` JSON-RPC。代码已移除，类型定义保留在 `src/schemas/` 供参考。

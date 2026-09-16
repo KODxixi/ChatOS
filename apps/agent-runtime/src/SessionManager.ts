@@ -4,7 +4,6 @@ import fs from 'node:fs';
 
 export interface Session {
   id: string;
-  threadId: string;
   title: string;
   createdAt: number;
   updatedAt: number;
@@ -35,7 +34,6 @@ export class SessionManager {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL,
         title TEXT NOT NULL DEFAULT 'New Session',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -54,14 +52,16 @@ export class SessionManager {
       CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
     `);
+
+    // 兼容旧库：如果有 thread_id 列，忽略（不删除，避免数据丢失）
   }
 
-  createSession(threadId: string, title = 'New Session'): Session {
+  createSession(title = 'New Session'): Session {
     const id = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = Date.now();
     this.db.prepare(
-      'INSERT INTO sessions (id, thread_id, title, created_at, updated_at, message_count) VALUES (?, ?, ?, ?, ?, 0)'
-    ).run(id, threadId, title, now, now);
+      'INSERT INTO sessions (id, title, created_at, updated_at, message_count) VALUES (?, ?, ?, ?, 0)'
+    ).run(id, title, now, now);
     return this.getSession(id)!;
   }
 
@@ -70,14 +70,13 @@ export class SessionManager {
     return row ? this.mapSession(row) : null;
   }
 
-  getSessionByThread(threadId: string): Session | null {
-    const row = this.db.prepare('SELECT * FROM sessions WHERE thread_id = ?').get(threadId) as any;
-    return row ? this.mapSession(row) : null;
-  }
-
   listSessions(limit = 50): Session[] {
     const rows = this.db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?').all(limit) as any[];
-    return rows.map(this.mapSession);
+    return rows.map((r) => this.mapSession(r));
+  }
+
+  renameSession(id: string, title: string): void {
+    this.db.prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?').run(title, Date.now(), id);
   }
 
   updateSession(id: string, updates: Partial<Pick<Session, 'title' | 'metadata'>>): void {
@@ -103,16 +102,17 @@ export class SessionManager {
     this.db.prepare('UPDATE sessions SET message_count = message_count + 1, updated_at = ? WHERE id = ?').run(now, sessionId);
   }
 
+  /** 获取对话历史（升序，最早在前） */
   getMessages(sessionId: string, limit = 100): Message[] {
-    return this.db.prepare(
-      'SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?'
+    const rows = this.db.prepare(
+      'SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT ?'
     ).all(sessionId, limit) as Message[];
+    return rows;
   }
 
   private mapSession(row: any): Session {
     return {
       id: row.id,
-      threadId: row.thread_id,
       title: row.title,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

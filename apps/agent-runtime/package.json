@@ -1,7 +1,7 @@
 {
   "name": "chatos-agent-runtime",
   "version": "0.1.0",
-  "description": "ChatOS Agent Runtime - local Codex agent integration with LM Studio",
+  "description": "ChatOS Agent Runtime - local LM Studio agent integration with tool-calling",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

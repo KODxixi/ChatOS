@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { AgentRuntimeConfig } from './config.js';
+import type { ToolDefinition as OpenAIToolDef } from './LocalModelClient.js';
 
 export interface ToolDefinition {
   name: string;
@@ -28,6 +29,18 @@ export class ToolRegistry extends EventEmitter {
 
   list(): ToolDefinition[] {
     return Array.from(this.tools.values());
+  }
+
+  /** 返回 OpenAI 格式的 tool definitions */
+  getToolDefinitions(): OpenAIToolDef[] {
+    return Array.from(this.tools.values()).map((t) => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    }));
   }
 
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
@@ -89,6 +102,29 @@ export class ToolRegistry extends EventEmitter {
         const full = path.resolve(this.config.workspaceDir, String(args.path));
         if (!full.startsWith(this.config.workspaceDir)) throw new Error('path outside workspace');
         return fs.readFile(full, 'utf-8');
+      },
+    });
+
+    // File write tool
+    this.register({
+      name: 'write_file',
+      description: 'Write text content to a file in workspace. Creates directories if needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path within workspace' },
+          content: { type: 'string', description: 'File content to write' },
+        },
+        required: ['path', 'content'],
+      },
+      handler: async (args) => {
+        const fs = await import('node:fs/promises');
+        const path = await import('node:path');
+        const full = path.resolve(this.config.workspaceDir, String(args.path));
+        if (!full.startsWith(this.config.workspaceDir)) throw new Error('path outside workspace');
+        await fs.mkdir(path.dirname(full), { recursive: true });
+        await fs.writeFile(full, String(args.content), 'utf-8');
+        return `Written ${String(args.content).length} bytes to ${args.path}`;
       },
     });
 

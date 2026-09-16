@@ -1,13 +1,13 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
-import { CodexClient, type CodexEvent } from './CodexClient.js';
+import { LocalModelClient, type AgentEvent, type ChatMessage } from './LocalModelClient.js';
 import { SessionManager } from './SessionManager.js';
 import { ToolRegistry } from './ToolRegistry.js';
 import type { AgentRuntimeConfig } from './config.js';
 
 interface WsClientMessage {
-  type: 'start' | 'message' | 'interrupt' | 'list' | 'delete' | 'history';
+  type: 'start' | 'message' | 'interrupt' | 'list' | 'delete' | 'history' | 'rename';
   sessionId?: string;
   text?: string;
   title?: string;
@@ -16,7 +16,7 @@ interface WsClientMessage {
 export class AgentRuntimeServer extends EventEmitter {
   private wss: WebSocketServer;
   private httpServer: http.Server;
-  private codex: CodexClient;
+  private model: LocalModelClient;
   private sessions: SessionManager;
   private tools: ToolRegistry;
   private config: AgentRuntimeConfig;
@@ -25,44 +25,56 @@ export class AgentRuntimeServer extends EventEmitter {
   constructor(config: AgentRuntimeConfig) {
     super();
     this.config = config;
-    this.codex = new CodexClient(config);
-    this.sessions = new SessionManager(config.dbPath);
     this.tools = new ToolRegistry(config);
+    this.model = new LocalModelClient({
+      baseUrl: config.lmStudioUrl,
+      model: config.model,
+      apiKey: config.apiKey,
+      maxTokens: config.maxTokens,
+      temperature: config.temperature,
+      maxToolIterations: config.maxToolIterations,
+      requestTimeoutMs: config.modelTimeoutMs,
+      systemPrompt: config.systemPrompt,
+    }, this.tools);
+    this.sessions = new SessionManager(config.dbPath);
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
     this.wss = new WebSocketServer({ server: this.httpServer });
 
-    this.codex.on('event', (event: CodexEvent) => this.broadcast(event));
-    this.tools.on('tool-call', (t) => this.broadcast({ type: 'tool-call', tool: t.name, args: t.args }));
-    this.tools.on('tool-result', (t) => this.broadcast({ type: 'tool-result', tool: t.name, result: t.result }));
+    this.model.on('event', (event: AgentEvent) => this.broadcast(event as unknown as Record<string, unknown>));
   }
 
   async start(): Promise<void> {
-    await this.codex.start();
-    await this.codex.initialize();
-
     this.wss.on('connection', (ws) => {
       ws.on('message', (data) => this.handleWsMessage(ws, data.toString()));
-      ws.send(JSON.stringify({ type: 'connected', tools: this.tools.list().map(t => t.name) }));
+      ws.send(JSON.stringify({
+        type: 'connected',
+        tools: this.tools.list().map((t) => t.name),
+        model: this.config.model,
+      }));
     });
 
     this.httpServer.listen(this.config.wsPort, () => {
       console.log(`[AgentRuntime] WebSocket+HTTP on :${this.config.wsPort}`);
-      console.log(`[AgentRuntime] Codex initialized, model=${this.config.model}`);
+      console.log(`[AgentRuntime] Model=${this.config.model} @ ${this.config.lmStudioUrl}`);
+      console.log(`[AgentRuntime] Tools: ${this.tools.list().map((t) => t.name).join(', ')}`);
     });
   }
 
-  private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private async handleHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url!, `http://localhost`);
 
     if (url.pathname === '/health') {
+      const health = await this.model.healthCheck();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        status: 'ok',
-        codexRunning: this.codex.isRunning,
-        codexInitialized: this.codex.isInitialized,
+        status: health.ok ? 'ok' : 'degraded',
+        model: health.model || this.config.model,
+        modelReachable: health.ok,
+        modelError: health.error,
         activeSession: this.activeSessionId,
-        tools: this.tools.list().map(t => t.name),
+        isRunning: this.model.isRunning,
+        tools: this.tools.list().map((t) => t.name),
       }));
       return;
     }
@@ -89,16 +101,14 @@ export class AgentRuntimeServer extends EventEmitter {
     try {
       switch (msg.type) {
         case 'start':
-          await this.handleStart(ws, msg.title);
+          this.handleStart(ws, msg.title);
           break;
         case 'message':
           await this.handleMessage(ws, msg.sessionId!, msg.text!);
           break;
         case 'interrupt':
-          if (this.activeSessionId) {
-            const sess = this.sessions.getSession(this.activeSessionId);
-            if (sess) await this.codex.interruptTurn(sess.threadId);
-          }
+          this.model.interrupt();
+          this.broadcast({ type: 'interrupted' });
           break;
         case 'list':
           ws.send(JSON.stringify({ type: 'sessions', data: this.sessions.listSessions() }));
@@ -107,6 +117,12 @@ export class AgentRuntimeServer extends EventEmitter {
           if (msg.sessionId) {
             this.sessions.deleteSession(msg.sessionId);
             ws.send(JSON.stringify({ type: 'deleted', sessionId: msg.sessionId }));
+          }
+          break;
+        case 'rename':
+          if (msg.sessionId && msg.title) {
+            this.sessions.renameSession(msg.sessionId, msg.title);
+            ws.send(JSON.stringify({ type: 'renamed', sessionId: msg.sessionId, title: msg.title }));
           }
           break;
         case 'history':
@@ -124,12 +140,10 @@ export class AgentRuntimeServer extends EventEmitter {
     }
   }
 
-  private async handleStart(ws: WebSocket, title?: string): Promise<void> {
-    const { threadId } = await this.codex.startThread({ cwd: this.config.workspaceDir });
-    const session = this.sessions.createSession(threadId, title || 'New Session');
+  private handleStart(ws: WebSocket, title?: string): void {
+    const session = this.sessions.createSession(title || 'New Session');
     this.activeSessionId = session.id;
     ws.send(JSON.stringify({ type: 'session-started', session }));
-    this.broadcast({ type: 'log', level: 'info', message: `session ${session.id} thread=${threadId}` });
   }
 
   private async handleMessage(ws: WebSocket, sessionId: string, text: string): Promise<void> {
@@ -139,23 +153,40 @@ export class AgentRuntimeServer extends EventEmitter {
       return;
     }
 
+    if (this.model.isRunning) {
+      ws.send(JSON.stringify({ type: 'error', message: 'another turn is in progress' }));
+      return;
+    }
+
     this.activeSessionId = sessionId;
     this.sessions.addMessage(sessionId, 'user', text);
     this.broadcast({ type: 'user-message', sessionId, text });
 
+    // 构建对话历史
+    const history = this.sessions.getMessages(sessionId) as ChatMessage[];
+
     let assistantText = '';
-    const onEvent = (event: CodexEvent) => {
-      if (event.type === 'text-delta') {
+    const onEvent = (event: AgentEvent) => {
+      if (event.type === 'text-delta' && event.text) {
         assistantText += event.text;
       }
       if (event.type === 'turn-complete') {
         this.sessions.addMessage(sessionId, 'assistant', assistantText);
-        this.codex.off('event', onEvent);
+        this.model.off('event', onEvent);
+      }
+      if (event.type === 'error') {
+        this.sessions.addMessage(sessionId, 'assistant', assistantText || `[error] ${event.error}`);
+        this.model.off('event', onEvent);
       }
     };
-    this.codex.on('event', onEvent);
+    this.model.on('event', onEvent);
 
-    await this.codex.startTurn(session.threadId, text);
+    try {
+      await this.model.runTurn(history);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.broadcast({ type: 'error', message: msg });
+    }
   }
 
   private broadcast(event: Record<string, unknown>): void {
@@ -168,7 +199,7 @@ export class AgentRuntimeServer extends EventEmitter {
   }
 
   stop(): void {
-    this.codex.stop();
+    this.model.interrupt();
     this.sessions.close();
     this.wss.close();
     this.httpServer.close();

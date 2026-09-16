@@ -1,17 +1,14 @@
 {
-  "codexPath": "codex",
-  "model": "qwen/qwen3-vl-8b",
-  "localProvider": "lmstudio",
   "lmStudioUrl": "http://localhost:1234/v1",
+  "model": "qwen/qwen3-vl-8b",
+  "apiKey": "not-needed",
   "embeddingUrl": "http://localhost:9123/v1",
-  "sandbox": "workspace-write",
-  "approvalPolicy": "never",
-  "workspaceDir": "C:/ChatOS/var/agent-workspace",
+  "embeddingModel": "text-embedding-qwen3-embedding-8b",
+  "workspaceDir": "C:\\Users\\shiguanyu\\ChatOS\\workspace",
   "wsPort": 8913,
-  "httpPort": 8914,
-  "dbPath": "C:/ChatOS/var/agent-runtime.sqlite",
-  "logDir": "C:/ChatOS/var/logs",
-  "maxToolCalls": 20,
+  "dbPath": "C:\\Users\\shiguanyu\\ChatOS\\data\\agent-runtime.sqlite",
+  "maxToolIterations": 20,
   "modelTimeoutMs": 120000,
-  "maxRestarts": 3
+  "maxTokens": 4096,
+  "temperature": 0.3
 }
