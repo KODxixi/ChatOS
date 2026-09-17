@@ -203,6 +203,11 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [activeAuxModal, setActiveAuxModal] = useState<'audit' | 'graph' | 'engine' | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // When jumpToMessage switches conversations it issues its own anchored
+  // fetch; the auto-load effect below must skip exactly one run so a regular
+  // recent-window fetch cannot overwrite the anchored window it just set.
+  const suppressMessagesEffectRef = useRef(false);
+
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -340,6 +345,10 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   useEffect(() => {
+    if (suppressMessagesEffectRef.current) {
+      suppressMessagesEffectRef.current = false;
+      return;
+    }
     if (conversationDataSource !== 'database' || !selectedConversation) return;
     const controller = new AbortController();
     fetch(`/api/conversations/${encodeURIComponent(selectedConversation.id)}/messages?limit=100`, {
@@ -424,6 +433,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const jumpToMessage = useCallback(async (conversationId: string, messageId: string) => {
     const targetConv = conversations.find(c => c.id === conversationId);
     if (!targetConv) return;
+    suppressMessagesEffectRef.current = true;
     setSelectedConversation(targetConv);
     setSelectedProject(null);
     setSelectedTodo(null);
@@ -453,6 +463,15 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {
       showToast('定位原始消息失败，请稍后重试。');
       setHighlightedMessageId(null);
+      // The auto-load effect was suppressed; load the recent window so the
+      // conversation is not left empty after a failed anchor.
+      try {
+        const fb = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`, { cache: 'no-store' });
+        if (fb.ok) {
+          const fbData = await fb.json();
+          if (Array.isArray(fbData?.items)) setMessages(prev => ({ ...prev, [conversationId]: fbData.items }));
+        }
+      } catch { /* leave existing messages */ }
     }
   }, [conversations, showToast]);
 
@@ -733,13 +752,17 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }),
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
+        const savedList = await res.json() as SharedTodoList;
+        // Replace the client-temp id with the server-authoritative id so
+        // subsequent PATCH/DELETE calls address the right entity.
+        setSharedLists(prev => prev.map(l => l.id === newList.id ? { ...l, id: savedList.id } : l));
+        setActiveSharedListId(savedList.id);
+        return savedList;
       } catch (err) {
         setSharedLists(prev => prev.filter(l => l.id !== newList.id));
         showToast('共享清单保存失败，已回滚');
         return null;
       }
-
-      return newList;
     },
     [teamMembers, showToast]
   );
@@ -827,6 +850,13 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }),
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
+        const savedTask = await res.json() as SharedTask;
+        // Replace client-temp id with server-authoritative id.
+        setSharedLists(prev => prev.map(list =>
+          list.id === listId
+            ? { ...list, tasks: list.tasks.map(t => t.id === newTask.id ? { ...t, id: savedTask.id } : t) }
+            : list
+        ));
       } catch (e) {
         setSharedLists(prev => prev.map(list =>
           list.id === listId
@@ -922,6 +952,9 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const deleteSharedTask = useCallback(
     async (listId: string, taskId: string) => {
+      // Save the removed task so we can restore it if the server rejects.
+      const listToModify = sharedLists.find(l => l.id === listId);
+      const removedTask = listToModify?.tasks.find(t => t.id === taskId);
       setSharedLists(prev =>
         prev.map(list => {
           if (list.id === listId) {
@@ -937,10 +970,19 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
       } catch (e) {
-        showToast('删除协作任务失败，请刷新后重试');
+        if (removedTask) {
+          setSharedLists(prev =>
+            prev.map(list =>
+              list.id === listId
+                ? { ...list, tasks: [...list.tasks, removedTask] }
+                : list
+            )
+          );
+        }
+        showToast('删除协作任务失败，已回滚');
       }
     },
-    [showToast]
+    [sharedLists, showToast]
   );
 
   const updateSharedTask = useCallback(
@@ -1206,14 +1248,17 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let finalStatus = 'running';
       let result: Record<string, unknown> | null = null;
-      for (let i = 0; i < 180; i++) {
+      // Only these are terminal.  queued / running / retrying / pending all
+      // keep polling — a queued or retrying job is NOT done yet.
+      const TERMINAL = new Set(['completed', 'failed', 'degraded']);
+      for (let i = 0; i < 600; i++) {
         await new Promise(r => setTimeout(r, 1000));
         const jobRes = await fetch(`/api/gateway/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
         if (!jobRes.ok) throw new Error(`任务轮询 ${jobRes.status}`);
         const jobData = await jobRes.json() as { status?: string; result?: Record<string, unknown> };
         finalStatus = jobData.status || 'running';
         result = jobData.result || null;
-        if (finalStatus !== 'running') break;
+        if (TERMINAL.has(finalStatus)) break;
       }
       const addedCount = Number(result?.addedCount ?? result?.newTasks ?? result?.tasks ?? 0);
       const message = finalStatus === 'completed'
@@ -1234,6 +1279,40 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (Array.isArray(snap.items)) {
           conversationRevisionRef.current = null;
           setConversations(snap.items);
+        }
+      } catch { /* non-fatal */ }
+      // Also reload real todos so newly extracted tasks and status changes appear.
+      try {
+        const todoRes = await fetch('/api/gateway/tasks?limit=300', { cache: 'no-store' });
+        if (todoRes.ok) {
+          const todoData = await todoRes.json() as { items?: Array<Record<string, unknown>> };
+          if (Array.isArray(todoData.items)) {
+            const realTodos: TodoItem[] = todoData.items.map((t) => {
+              const gStatus = String(t.status || 'todo');
+              const isIgnored = gStatus === 'ignored';
+              const status: TodoStatus = gStatus === 'completed' || gStatus === 'done' ? 'completed' : 'pending';
+              return {
+                id: String(t.taskId || ''),
+                title: String(t.content || ''),
+                description: '',
+                status,
+                assigneeRole: 'other',
+                dueDate: String(t.dueDate || '待确认'),
+                isUrgent: t.priority === 'high',
+                isOverdue: false,
+                sourceMessageId: t.sourceMessageId != null ? String(t.sourceMessageId) : '',
+                sourceConversationId: String(t.conversationId || ''),
+                sourceConversationName: String(t.conversationTitle || ''),
+                sourceSnippet: String(t.content || ''),
+                evidenceText: t.senderName ? `来自 ${String(t.senderName)} 的会话任务` : '来自本地会话任务库',
+                isIgnored,
+                manualModified: false,
+                createdAt: new Date(Number(t.sentAt || Date.now())).toISOString(),
+                confidence: 'clear',
+              };
+            });
+            setTodos(realTodos);
+          }
         }
       } catch { /* non-fatal */ }
       return { addedCount, message };

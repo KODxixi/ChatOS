@@ -188,14 +188,23 @@ def classify_all(
             title, kind, sample_content=sample_text or None,
         )
 
+        # Write derived classification to conversation_overrides, never the
+        # raw conversations table.  Reads COALESCE override over base.
         connection.execute(
             """
-            UPDATE conversations
-            SET domain = ?, project_id = NULL, project_role = ?,
-                classification_status = ?, classified_at = ?
-            WHERE id = ?
+            INSERT INTO conversation_overrides
+                (conversation_id, domain, project_id, project_role,
+                 classification_status, classified_at, updated_at)
+            VALUES (?, ?, NULL, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                domain = excluded.domain,
+                project_id = NULL,
+                project_role = excluded.project_role,
+                classification_status = excluded.classification_status,
+                classified_at = excluded.classified_at,
+                updated_at = excluded.updated_at
             """,
-            (domain, role, status, now_ms, conv_id),
+            (conv_id, domain, role, status, now_ms),
         )
 
         by_domain[domain] = by_domain.get(domain, 0) + 1

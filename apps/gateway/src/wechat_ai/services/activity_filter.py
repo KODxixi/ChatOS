@@ -138,8 +138,16 @@ def evaluate_activity(
         ).fetchone()[0]
 
         if user_recent == 0:
+            # Write the derived override, never the raw conversations row.
             connection.execute(
-                "UPDATE conversations SET is_indexing_enabled = 0 WHERE id = ?",
+                """
+                INSERT INTO conversation_overrides
+                    (conversation_id, is_indexing_enabled, updated_at)
+                VALUES (?, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    is_indexing_enabled = 0,
+                    updated_at = excluded.updated_at
+                """,
                 (conv_id,),
             )
             # Immediately drop retrieval chunks so search/RAG stops returning

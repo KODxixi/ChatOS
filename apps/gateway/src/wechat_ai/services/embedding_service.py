@@ -91,6 +91,10 @@ def _get_indexable_conversations(db_path: str, *, limit: int | None = None) -> l
             SELECT id FROM conversations
             WHERE kind IN ('group','direct')
               AND message_count > 10
+              AND COALESCE(
+                  (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                   WHERE o.conversation_id = conversations.id),
+                  conversations.is_indexing_enabled, 1) = 1
         """
         params: list[Any] = []
         if skip_ids:

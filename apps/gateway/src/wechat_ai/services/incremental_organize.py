@@ -330,19 +330,15 @@ def _stage_tasks(
         # Advance watermark to the latest message we scanned (max sent_at, then max id).
         latest = max(msg_rows, key=lambda r: (int(r["sent_at"]), int(r["id"])))
         _set_watermark(connection, conv_id, int(latest["sent_at"]), int(latest["id"]))
-        stats.watermarksAdvanced += 1
-
-    # Persist conversations whose tasks were extracted but whose project
-    # projection has not yet succeeded.  The watermark has already advanced,
-    # so a later run with NO new messages would otherwise see affected=empty
-    # and skip project recovery entirely.  The projects stage re-projects
-    # these rows and clears them on success (see organize_pending).
-    pending_now = int(time.time() * 1000)
-    for conv_id in affected_conversations:
+        # Persist the pending row in the SAME transaction as the watermark.
+        # The batch commit every 25 conversations (above) commits both, so a
+        # crash mid-loop never advances the watermark without recording that
+        # project projection still needs to run for this conversation.
         connection.execute(
             "INSERT OR IGNORE INTO organize_pending(conversation_id, pending_since) VALUES (?, ?)",
-            (conv_id, pending_now),
+            (conv_id, int(time.time() * 1000)),
         )
+        stats.watermarksAdvanced += 1
 
     connection.commit()
     return affected_conversations

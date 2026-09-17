@@ -13,11 +13,11 @@ import logging
 import sqlite3
 import time
 from contextlib import closing
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .conversations import api_error_response
 from ..services import message_cleaning as mc
@@ -25,13 +25,22 @@ from ..services.conversation_service import ConnectionFactory
 
 logger = logging.getLogger(__name__)
 
+# Allowed task status / priority values.  Kept in one place so the API contract
+# and the UI status mapping agree.  Raw task lifecycle: todo -> completed;
+# ignored is a user choice to hide the item.  `done` is accepted as an alias
+# for completed (some older rows use it).
+TASK_STATUSES = frozenset({"todo", "completed", "ignored", "done"})
+TASK_PRIORITIES = frozenset({"low", "medium", "high"})
+
 
 class TaskPatch(BaseModel):
     """Body for PATCH /api/tasks/{task_id}.  Both fields optional; at least
-    one must be provided (enforced in the handler)."""
+    one must be provided (enforced in the handler).  Values are validated
+    against the task lifecycle enums so a UI typo cannot silently persist an
+    unknown status (e.g. mapping draft/in_progress straight to todo)."""
 
-    status: str | None = None
-    priority: str | None = None
+    status: Literal["todo", "completed", "ignored", "done"] | None = None
+    priority: Literal["low", "medium", "high"] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +454,7 @@ def create_tasks_router(
                 f"""
                 SELECT t.task_id, t.conversation_id, t.conversation_title,
                        t.content, t.sender_name, t.sent_at, t.status,
-                       t.priority, t.due_date
+                       t.priority, t.due_date, t.source_message_id
                 FROM tasks t
                 {where_sql}
                 ORDER BY t.sent_at DESC
@@ -464,6 +473,7 @@ def create_tasks_router(
                     "status": r["status"],
                     "priority": r["priority"],
                     "dueDate": r["due_date"],
+                    "sourceMessageId": r["source_message_id"],
                 }
                 for r in rows
             ]
@@ -501,7 +511,7 @@ def create_tasks_router(
                 )
             row = connection.execute(
                 "SELECT task_id, conversation_id, conversation_title, content,"
-                " sender_name, sent_at, status, priority, due_date"
+                " sender_name, sent_at, status, priority, due_date, source_message_id"
                 " FROM tasks WHERE task_id = ?",
                 (task_id,),
             ).fetchone()
@@ -515,6 +525,7 @@ def create_tasks_router(
             "status": row["status"],
             "priority": row["priority"],
             "dueDate": row["due_date"],
+            "sourceMessageId": row["source_message_id"],
         }
 
     return router

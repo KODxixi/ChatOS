@@ -327,10 +327,19 @@ app.use((_req, res, next) => {
 // 3) Same-origin enforcement for mutating requests.  No Access-Control-Allow-*
 //    headers are ever set, so the browser blocks cross-origin writes by default;
 //    we additionally reject a non-loopback Origin on POST/PATCH/PUT/DELETE.
+const ALLOWED_ORIGINS = new Set([
+  `http://127.0.0.1:${UI_HOST_PORT}`,
+  `http://localhost:${UI_HOST_PORT}`,
+  'http://127.0.0.1:3109',
+  'http://localhost:3109',
+]);
 app.use((req, res, next) => {
   if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method || '')) {
     const origin = String(req.headers.origin || '').toLowerCase();
-    if (origin && !origin.startsWith('http://127.0.0.1:') && !origin.startsWith('http://localhost:')) {
+    // Exact-match allowed loopback origins only.  A generic startsWith would
+    // accept any localhost port (e.g. a random local dev server), which is
+    // not the same-origin UI and must be rejected.
+    if (origin && !ALLOWED_ORIGINS.has(origin)) {
       res.status(403).json({ error: 'cross_origin_blocked', message: '跨域修改请求已拒绝。' });
       return;
     }
@@ -368,23 +377,54 @@ app.use('/api/gateway', async (req, res) => {
   }
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const timeout = setTimeout(() => controller.abort(), 120_000);
     init.signal = controller.signal;
     const upstream = await fetch(target, init);
     clearTimeout(timeout);
     res.status(upstream.status);
+    // Relay response headers verbatim (content-type, content-length, and any
+    // gateway-driven headers).  We do NOT call upstream.text() — that would
+    // corrupt binary asset downloads and break SSE streaming.  Instead we
+    // pipe the upstream Web ReadableStream straight to the Express response.
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('content-type', contentType);
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('content-length', contentLength);
+    const cacheControl = upstream.headers.get('cache-control');
+    if (cacheControl) res.setHeader('cache-control', cacheControl);
     // Relay Set-Cookie so the browser holds the gateway local session.
     const upstreamCookies = upstream.headers.getSetCookie?.() ?? [];
     for (const c of upstreamCookies) res.appendHeader('set-cookie', c);
-    const text = await upstream.text();
-    res.send(text);
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    const reader = upstream.body.getReader();
+    const pump = async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) { res.end(); break; }
+          res.write(Buffer.from(value));
+        }
+      } catch (err) {
+        if (!res.headersSent) {
+          res.status(502).json({ error: 'gateway_stream_error', message: String(err) });
+        } else {
+          res.destroy(err as Error);
+        }
+      }
+    };
+    void pump();
   } catch (error) {
-    res.status(503).json({
-      error: 'gateway_unavailable',
-      message: error instanceof Error ? error.message : 'gateway 不可用',
-    });
+    if (!res.headersSent) {
+      res.status(503).json({
+        error: 'gateway_unavailable',
+        message: error instanceof Error ? error.message : 'gateway 不可用',
+      });
+    } else {
+      res.destroy(error as Error);
+    }
   }
 });
 app.get('/api/runtime', (_req, res) => {
@@ -521,7 +561,13 @@ app.get('/api/conversations/:conversationId/messages', (req, res) => {
         hasAttachment: row.type !== 'text',
       };
     });
-    res.json({ source: 'sqlite-readonly', total: items.length, anchored, anchorMessageId: anchored ? String(targetMessageId) : undefined });
+    res.json({
+      source: 'sqlite-readonly',
+      total: items.length,
+      items,
+      anchored,
+      anchorMessageId: anchored ? String(targetMessageId) : undefined,
+    });
   } catch (error) {
     res.status(503).json({
       error: 'local_conversation_messages_unavailable',
@@ -614,6 +660,15 @@ app.post('/api/local-model/thinking-analysis', async (req, res) => {
 // ==========================================
 // COLLABORATIVE APIS: Shared Lists & Tasks
 // ==========================================
+// DEMO / IN-MEMORY STATE: these endpoints operate on process-local state
+// (sharedListsState) that resets on server restart.  They are NOT persisted
+// to SQLite and must not be presented as durable collaboration.  The
+// X-ChatOS-Mode header makes the demo status explicit to the client and
+// to any network/inspection tooling.
+app.use('/api/collaborative', (_req, res, next) => {
+  res.setHeader('X-ChatOS-Mode', 'in-memory-demo');
+  next();
+});
 
 // 1. Get Team Members
 app.get('/api/collaborative/team-members', (req, res) => {
