@@ -272,18 +272,18 @@ def test_taskpatch_rejects_invalid_status() -> None:
     from wechat_ai.api.tasks import TaskPatch
     from pydantic import ValidationError
 
-    # Valid values accepted.
-    for s in ("todo", "completed", "ignored", "done"):
+    # Valid values accepted (round3 extended to pending/in_progress/draft).
+    for s in ("todo", "completed", "ignored", "done", "pending", "in_progress", "draft"):
         m = TaskPatch(status=s)
         assert m.status == s
     for p in ("low", "medium", "high"):
         m = TaskPatch(priority=p)
         assert m.priority == p
-    # Invalid values rejected (e.g. draft / in_progress must not silently map to todo).
+    # Truly invalid values rejected.
     with pytest.raises(ValidationError):
-        TaskPatch(status="draft")
+        TaskPatch(status="urgent")
     with pytest.raises(ValidationError):
-        TaskPatch(status="in_progress")
+        TaskPatch(status="bogus")
     with pytest.raises(ValidationError):
         TaskPatch(priority="urgent")
 
