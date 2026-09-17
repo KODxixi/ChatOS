@@ -24,6 +24,7 @@ test('canonical source, build and occupied-port contract', async t => {
     else put(name, name.endsWith('.json') ? '{}' : 'source');
   }
   put('apps/chatos-console/src/App.tsx', 'version one');
+  put('apps/gateway/src/fixture.py', '# synthetic gateway source');
   put('apps/gateway/config/settings.json', JSON.stringify({ libraryDb: 'data/test.sqlite', frontendUrl: c.UI_URL }));
   put('apps/chatos-console/dist/index.html', '<div id="root"></div>');
   put('apps/chatos-console/dist/server.cjs', 'server version one');
@@ -178,4 +179,29 @@ test('formal gate validates an existing library before any service spawn', async
     assert.deepEqual(fs.readFileSync(file), bytes);
     assert.ok(!fs.existsSync(`${file}-journal`));
   });
+  for (const name of ['apps/gateway/src/untracked.py', 'apps/gateway/src/migrations/999_fixture.sql']) {
+    await t.test(`gateway source must be tracked: ${name}`, () => {
+      const buildId = c.sourceIdentity(root).buildId;
+      const gatewayHash = c.gatewayIdentity(root).startupCodeIdentity;
+      put(name, name.endsWith('.py') ? '# new gateway module' : 'SELECT 1;');
+      try {
+        for (const args of [[], ['--preflight'], ['--live']]) {
+          const result = run('verify-entry.mjs', args);
+          assert.equal(result.status, 1, `untracked gateway source must fail: ${result.stdout} ${result.stderr}`);
+          assert.match(result.stderr, /Source not Git tracked/);
+        }
+        const launch = run('start_chatos.mjs');
+        assert.equal(launch.status, 1);
+        assert.match(launch.stderr, /Source not Git tracked/);
+        assert.ok(!fs.existsSync(path.join(root, 'var/logs')), 'untracked source must fail before either service is spawned');
+      } finally {
+        execFileSync('git', ['-C', root, 'add', '--', name]);
+      }
+      assert.notEqual(c.gatewayIdentity(root).startupCodeIdentity, gatewayHash);
+      assert.equal(c.sourceIdentity(root).buildId, buildId, 'backend-only source changes must not invalidate the UI build');
+      const accepted = run('verify-entry.mjs');
+      assert.equal(accepted.status, 0, accepted.stderr);
+      assert.equal(c.verifyBuild(root).buildId, buildId, 'staged gateway source passes without rebuilding UI');
+    });
+  }
 });

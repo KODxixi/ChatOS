@@ -37,6 +37,13 @@ export function sourceFiles(root) {
   return SOURCE_INPUTS.flatMap(name => name.endsWith('/') ? filesUnder(path.join(root, name)) : [path.join(root, name)]);
 }
 
+function gatewayFiles(root) {
+  const gateway = path.join(root, 'apps/gateway');
+  const files = filesUnder(path.join(gateway, 'src')).filter(file => /\.(py|sql)$/.test(file));
+  for (const name of ['pyproject.toml', 'uv.lock']) if (fs.existsSync(path.join(gateway, name))) files.push(path.join(gateway, name));
+  return files;
+}
+
 export function sourceIdentity(root) {
   const sourceHash = hashFiles(root, sourceFiles(root));
   return { contractVersion: 1, sourceRelative: SOURCE_RELATIVE, originCommit: ORIGIN_COMMIT, sourceHash, buildId: sourceHash };
@@ -56,7 +63,7 @@ export function outputIdentity(dist) {
 
 export function verifyBuild(root) {
   const tracked = new Set(execFileSync('git', ['ls-files', '-z', '--cached'], { cwd: root, encoding: 'utf8' }).split('\0'));
-  for (const file of sourceFiles(root)) {
+  for (const file of [...sourceFiles(root), ...gatewayFiles(root)]) {
     const relative = path.relative(root, file).replaceAll('\\', '/');
     if (!tracked.has(relative)) throw new Error(`Source not Git tracked (stage it first): ${relative}`);
   }
@@ -124,11 +131,9 @@ export function captureUiRuntime(root, embeddedBuild, codePath) {
 
 export function gatewayIdentity(root) {
   const gateway = path.join(root, 'apps/gateway');
-  const files = filesUnder(path.join(gateway, 'src')).filter(file => /\.(py|sql)$/.test(file));
-  for (const name of ['pyproject.toml', 'uv.lock']) if (fs.existsSync(path.join(gateway, name))) files.push(path.join(gateway, name));
   return {
     service: 'chatos-gateway', sourceRoot: gateway,
-    startupCodeIdentity: hashFiles(gateway, files),
+    startupCodeIdentity: hashFiles(gateway, gatewayFiles(root)),
     libraryDb: resolveLibraryDb(root), frontendUrl: UI_URL,
     configPath: settingsPath(root),
     configIdentity: crypto.createHash('sha256').update(fs.readFileSync(settingsPath(root))).digest('hex'),
