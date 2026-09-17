@@ -5,6 +5,7 @@ import binascii
 import json
 import re
 import sqlite3
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -21,9 +22,9 @@ _CONVERSATION_COLUMNS = """
     conversations.kind AS kind,
     conversations.last_message_at AS last_message_at,
     conversations.message_count AS message_count,
-    conversations.is_favorite AS is_favorite,
-    conversations.is_archived AS is_archived,
-    conversations.note AS note,
+    COALESCE(o.is_favorite, conversations.is_favorite, 0) AS is_favorite,
+    COALESCE(o.is_archived, conversations.is_archived, 0) AS is_archived,
+    COALESCE(o.note, conversations.note) AS note,
     COALESCE(o.is_indexing_enabled, conversations.is_indexing_enabled, 1) AS is_indexing_enabled,
     COALESCE(o.domain, conversations.domain) AS domain,
     COALESCE(o.project_id, conversations.project_id) AS project_id,
@@ -44,6 +45,23 @@ _CONVERSATION_FROM = """
     LEFT JOIN conversation_overrides o
       ON o.conversation_id = conversations.id
 """
+
+
+def indexing_enabled_predicate(table: str = "conversations") -> str:
+    """SQL boolean predicate for the effective indexing-enabled flag.
+
+    The derived ``conversation_overrides`` row wins over the raw column; when
+    neither is set the conversation is treated as enabled.  Returns an
+    expression to embed in a WHERE clause, e.g. ``{...} = 1``.  Use this on
+    every read path (search / graph / knowledge projection / index) so disabling
+    a conversation in the UI immediately removes it from retrieval.
+    """
+    return (
+        "COALESCE("
+        f"(SELECT o.is_indexing_enabled FROM conversation_overrides o "
+        f"WHERE o.conversation_id = {table}.id), "
+        f"{table}.is_indexing_enabled, 1)"
+    )
 
 
 class ConversationNotFound(LookupError):
@@ -96,7 +114,7 @@ def list_conversations(
             WHERE (? IS NULL OR COALESCE(source_accounts.source_app_id, 'wechat') = ?)
               AND (? IS NULL OR COALESCE(conversation_origins.source_account_id, 'wechat:default') = ?)
               AND (? IS NULL OR conversations.kind = ?)
-              AND (? = 1 OR conversations.is_archived = 0)
+              AND (? = 1 OR COALESCE(o.is_archived, conversations.is_archived, 0) = 0)
             ORDER BY cursor_last_message_at DESC, id DESC
             LIMIT ?
             """,
@@ -124,7 +142,7 @@ def list_conversations(
             WHERE (? IS NULL OR COALESCE(source_accounts.source_app_id, 'wechat') = ?)
               AND (? IS NULL OR COALESCE(conversation_origins.source_account_id, 'wechat:default') = ?)
               AND (? IS NULL OR conversations.kind = ?)
-              AND (? = 1 OR conversations.is_archived = 0)
+              AND (? = 1 OR COALESCE(o.is_archived, conversations.is_archived, 0) = 0)
               AND (
                     COALESCE(conversations.last_message_at, -1) < ?
                     OR (
@@ -187,29 +205,49 @@ def update_conversation(
     conversation_id: str,
     updates: Mapping[str, object],
 ) -> dict[str, Any]:
+    """Apply human PATCH state to the DERIVED override table only.
+
+    The raw ``conversations`` table is never written here.  Favorite / archived /
+    note / indexing-enabled all live in ``conversation_overrides``; every read
+    path COALESCEs the override over the base column.
+    """
     columns = {
         "isFavorite": "is_favorite",
         "isArchived": "is_archived",
         "note": "note",
         "isIndexingEnabled": "is_indexing_enabled",
     }
-    assignments: list[str] = []
-    values: list[object] = []
-    for field, value in updates.items():
-        assignments.append(f"{columns[field]} = ?")
-        values.append(int(value) if field != "note" else value)
-
-    values.append(conversation_id)
-    cursor = connection.execute(
-        f"""
-        UPDATE conversations
-        SET {", ".join(assignments)}
-        WHERE id = ?
-        """,
-        values,
-    )
-    if cursor.rowcount == 0:
+    exists = connection.execute(
+        "SELECT 1 FROM conversations WHERE id = ?",
+        (conversation_id,),
+    ).fetchone()
+    if exists is None:
         raise ConversationNotFound(conversation_id)
+
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    override_cols: list[str] = []
+    values: list[object] = []
+    conflict_sets: list[str] = []
+    for field, value in updates.items():
+        col = columns[field]
+        override_cols.append(col)
+        values.append(int(value) if field != "note" else value)
+        conflict_sets.append(f"{col} = excluded.{col}")
+
+    col_list = ", ".join(override_cols)
+    placeholder_list = ", ".join("?" for _ in override_cols)
+    connection.execute(
+        f"""
+        INSERT INTO conversation_overrides
+            (conversation_id, {col_list}, updated_at)
+        VALUES (?, {placeholder_list}, ?)
+        ON CONFLICT(conversation_id) DO UPDATE SET
+            {", ".join(conflict_sets)},
+            updated_at = excluded.updated_at
+        """,
+        (conversation_id, *values, now_iso),
+    )
+
     if "isIndexingEnabled" in updates:
         from .graph_service import project_graph
         from .knowledge_projection_service import project_knowledge

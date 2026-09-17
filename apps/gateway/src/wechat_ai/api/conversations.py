@@ -12,8 +12,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ._errors import api_error_response, not_found_response as _not_found_response
-from ..services.activity_filter import evaluate_activity
-from ..services.conversation_classifier import classify_all
+from ..services.activity_filter import evaluate_activity_overrides
+from ..services.conversation_classifier import classify_all_overrides
 from ..services.project_extractor import extract_projects
 from ..services import message_cleaning as mc
 from ..services.conversation_service import (
@@ -211,20 +211,25 @@ def create_conversations_router(
             where = []
             params: list[object] = []
             if onlyActive:
-                where.append("is_indexing_enabled = 1")
+                where.append("COALESCE(o.is_indexing_enabled, conversations.is_indexing_enabled, 1) = 1")
             if domain:
-                where.append("domain = ?")
+                where.append("COALESCE(o.domain, conversations.domain) = ?")
                 params.append(domain)
             where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
             convs = connection.execute(
                 f"""
-                SELECT id, title, kind, message_count, last_message_at,
-                       is_indexing_enabled, domain, project_id, project_role,
-                       classification_status
+                SELECT conversations.id, conversations.title, conversations.kind,
+                       conversations.message_count, conversations.last_message_at,
+                       COALESCE(o.is_indexing_enabled, conversations.is_indexing_enabled, 1) AS is_indexing_enabled,
+                       COALESCE(o.domain, conversations.domain) AS domain,
+                       COALESCE(o.project_id, conversations.project_id) AS project_id,
+                       COALESCE(o.project_role, conversations.project_role) AS project_role,
+                       COALESCE(o.classification_status, conversations.classification_status, 'needs_review') AS classification_status
                 FROM conversations
+                LEFT JOIN conversation_overrides o ON o.conversation_id = conversations.id
                 {where_sql}
-                ORDER BY last_message_at DESC
+                ORDER BY conversations.last_message_at DESC
                 LIMIT ?
                 """,
                 [*params, limit],
@@ -358,7 +363,9 @@ def create_conversations_router(
                 })
 
             total = connection.execute(
-                f"SELECT COUNT(*) FROM conversations {where_sql}", params,
+                f"SELECT COUNT(*) FROM conversations "
+                f"LEFT JOIN conversation_overrides o ON o.conversation_id = conversations.id "
+                f"{where_sql}", params,
             ).fetchone()[0]
 
         return {"items": items, "total": total}
@@ -455,7 +462,7 @@ def create_conversations_router(
         """
         with closing(connection_factory()) as connection:
             connection.row_factory = sqlite3.Row
-            result = evaluate_activity(
+            result = evaluate_activity_overrides(
                 connection,
                 inactive_days=inactiveDays,
             )
@@ -480,7 +487,7 @@ def create_conversations_router(
         """
         with closing(connection_factory()) as connection:
             connection.row_factory = sqlite3.Row
-            result = classify_all(connection, only_needs_review=not all)
+            result = classify_all_overrides(connection, only_needs_review=not all)
         return {
             "evaluated": result.evaluated,
             "classified": result.classified,

@@ -5,7 +5,12 @@ import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
-from .conversation_service import InvalidCursor, decode_cursor, encode_cursor
+from .conversation_service import (
+    InvalidCursor,
+    decode_cursor,
+    encode_cursor,
+    indexing_enabled_predicate,
+)
 
 
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -42,9 +47,10 @@ def search_messages(
         where = ["message_fts MATCH ?"]
         parameters = [_to_fts_query(query)]
 
-    # Conversations marked is_indexing_enabled=0 are excluded from all
-    # search/retrieval paths (matches the retrieval_chunks projection policy).
-    where.append("conversations.is_indexing_enabled = 1")
+    # Conversations whose effective indexing flag (override wins over base)
+    # is 0 are excluded from all search/retrieval paths, matching the
+    # retrieval_chunks projection policy.
+    where.append(f"{indexing_enabled_predicate()} = 1")
 
     if conversation_id is not None:
         where.append("messages.conversation_id = ?")

@@ -26,6 +26,14 @@ from ..services.conversation_service import ConnectionFactory
 logger = logging.getLogger(__name__)
 
 
+class TaskPatch(BaseModel):
+    """Body for PATCH /api/tasks/{task_id}.  Both fields optional; at least
+    one must be provided (enforced in the handler)."""
+
+    status: str | None = None
+    priority: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Rule-based todo detection
 # ---------------------------------------------------------------------------
@@ -324,7 +332,10 @@ def create_tasks_router(
             conv_rows = connection.execute(
                 """
                 SELECT id, title FROM conversations
-                WHERE is_indexing_enabled = 1
+                WHERE COALESCE(
+                        (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                         WHERE o.conversation_id = conversations.id),
+                        conversations.is_indexing_enabled, 1) = 1
                   AND kind IN ('group', 'direct')
                 """
             ).fetchall()

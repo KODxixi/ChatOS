@@ -311,7 +311,10 @@ def _conversation_title_items(
     title_where = [
         "LENGTH(TRIM(title)) >= 2",
         "INSTR(?, TRIM(title)) > 0",
-        "is_indexing_enabled = 1",
+        "COALESCE("
+        "(SELECT o.is_indexing_enabled FROM conversation_overrides o "
+        "WHERE o.conversation_id = conversations.id), "
+        "conversations.is_indexing_enabled, 1) = 1",
     ]
     title_parameters: list[object] = [query.question]
     if query.conversation_ids:

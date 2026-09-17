@@ -104,35 +104,38 @@ const categoryFromDatabase = (domain: string | null, isGroup: boolean, indexingE
 const readConversationSnapshot = () => {
   const database = openLibraryDb();
   try {
-    const ownerRow = database.prepare(`
-      SELECT sender_id
-      FROM messages
-      WHERE sender_id IS NOT NULL AND sender_id != ''
-      GROUP BY sender_id
-      ORDER BY COUNT(*) DESC
-      LIMIT 1
-    `).get() as { sender_id?: string } | undefined;
-    const ownerId = ownerRow?.sender_id || '';
+    // Deliberately do NOT identify "the owner" as the global most active
+    // sender — that heuristic is wrong in shared group chats. Identity is
+    // shown only from real sender_name/sender_id columns.
     const cutoff = Date.now() - 90 * 86_400_000;
 
+    // Effective per-conversation state = conversation_overrides COALESCEd over
+    // the raw conversations columns.  Human PATCH (favorite/indexing/domain)
+    // and automatic classification both live in the derived table; this read
+    // path must honor them (matches the gateway's unified predicate).
     const rows = database.prepare(`
-      SELECT id, title, kind, message_count, last_message_at, is_favorite,
-             is_indexing_enabled, domain, project_id, project_role
-      FROM conversations
-      WHERE kind IN ('direct', 'group') AND message_count > 0
-      ORDER BY last_message_at DESC
+      SELECT c.id, c.title, c.kind, c.message_count, c.last_message_at,
+             COALESCE(o.is_favorite, c.is_favorite, 0) AS is_favorite,
+             COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) AS is_indexing_enabled,
+             COALESCE(o.domain, c.domain) AS domain,
+             COALESCE(o.project_id, c.project_id) AS project_id,
+             COALESCE(o.project_role, c.project_role) AS project_role,
+             COALESCE(o.updated_at, 0) AS override_updated_at
+      FROM conversations c
+      LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+      WHERE c.kind IN ('direct', 'group') AND c.message_count > 0
+      ORDER BY c.last_message_at DESC
     `).all() as Record<string, unknown>[];
 
     const recentStats = new Map(
       (database.prepare(`
         SELECT conversation_id,
                COUNT(DISTINCT CAST(sent_at / 86400000 AS INTEGER)) AS interaction_days,
-               COUNT(*) AS recent_messages,
-               SUM(CASE WHEN sender_id = ? THEN 1 ELSE 0 END) AS owner_messages
+               COUNT(*) AS recent_messages
         FROM messages
         WHERE sent_at >= ?
         GROUP BY conversation_id
-      `).all(ownerId, cutoff) as Record<string, unknown>[])
+      `).all(cutoff) as Record<string, unknown>[])
         .map(row => [String(row.conversation_id), row])
     );
 
@@ -155,6 +158,7 @@ const readConversationSnapshot = () => {
       (database.prepare(`
         WITH ranked AS (
           SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority,
+                 source_message_id,
                  ROW_NUMBER() OVER (
                    PARTITION BY conversation_id
                    ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, sent_at DESC
@@ -162,7 +166,7 @@ const readConversationSnapshot = () => {
           FROM tasks
           WHERE status = 'todo'
         )
-        SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority
+        SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority, source_message_id
         FROM ranked
         WHERE rank = 1
       `).all() as Record<string, unknown>[])
@@ -208,8 +212,9 @@ const readConversationSnapshot = () => {
       const stats = recentStats.get(id);
       const interactionDays90d = Number(stats?.interaction_days || 0);
       const recentMessages = Number(stats?.recent_messages || 0);
-      const ownerMessages = Number(stats?.owner_messages || 0);
-      const participation = recentMessages > 0 ? Math.round(ownerMessages / recentMessages * 100) : 0;
+      // No reliable "self" identity is derived from message volume; report 0
+      // rather than falsely labeling the most active sender as the user.
+      const participation = 0;
       const latest = latestMessages.get(id);
       const todo = topTodos.get(id);
       const favorite = Boolean(row.is_favorite);
@@ -251,7 +256,7 @@ const readConversationSnapshot = () => {
           assigneeRole: 'other',
           dueDate: String(todo.due_date || '待确认'),
           isUrgent: todo.priority === 'high',
-          sourceMessageId: `db-task-${String(todo.task_id)}`,
+          sourceMessageId: todo.source_message_id != null ? String(todo.source_message_id) : '',
           sourceConversationId: id,
           sourceConversationName: name,
           sourceSnippet: String(todo.content),
@@ -270,11 +275,16 @@ const readConversationSnapshot = () => {
     });
 
     const taskRevision = database.prepare('SELECT COALESCE(MAX(updated_at), 0) AS updated_at FROM tasks').get() as { updated_at?: number };
+    // Override timestamp is part of the revision so that enabling/disabling a
+    // conversation, favoriting it, or classifying it invalidates the cached
+    // snapshot on the next poll (derived-state changes must reach the UI).
+    // conversation_overrides.updated_at is an ISO8601 TEXT, not an epoch int.
+    const overrideRevision = database.prepare('SELECT MAX(updated_at) AS updated_at FROM conversation_overrides').get() as { updated_at?: string | null };
     const newestMessage = Math.max(0, ...items.map(item => Number(rows.find(row => String(row.id) === item.id)?.last_message_at || 0)));
     return {
       source: 'sqlite-readonly',
       total: items.length,
-      revision: `${newestMessage}:${Number(taskRevision?.updated_at || 0)}:${items.length}`,
+      revision: `${newestMessage}:${Number(taskRevision?.updated_at || 0)}:${overrideRevision?.updated_at ?? 'none'}:${items.length}`,
       updatedAt: new Date().toISOString(),
       items,
     };
@@ -283,7 +293,100 @@ const readConversationSnapshot = () => {
   }
 };
 
+// ==========================================
+// Security hardening (task 5) — loopback-only, no loose CORS.
+// ==========================================
+const UI_HOST_PORT = new URL(UI_URL).port;
+const ALLOWED_HOSTS = new Set([
+  `127.0.0.1:${UI_HOST_PORT}`,
+  `localhost:${UI_HOST_PORT}`,
+  `[::1]:${UI_HOST_PORT}`,
+  '127.0.0.1:3109',
+  'localhost:3109',
+]);
+
+// 1) Host allowlist: reject anything that is not the loopback UI origin.
+app.use((req, res, next) => {
+  const host = String(req.headers.host || '').toLowerCase();
+  if (!host || !ALLOWED_HOSTS.has(host)) {
+    res.status(403).json({ error: 'invalid_host', message: 'Host 不被允许。' });
+    return;
+  }
+  next();
+});
+
+// 2) Baseline security response headers.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  next();
+});
+
+// 3) Same-origin enforcement for mutating requests.  No Access-Control-Allow-*
+//    headers are ever set, so the browser blocks cross-origin writes by default;
+//    we additionally reject a non-loopback Origin on POST/PATCH/PUT/DELETE.
+app.use((req, res, next) => {
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method || '')) {
+    const origin = String(req.headers.origin || '').toLowerCase();
+    if (origin && !origin.startsWith('http://127.0.0.1:') && !origin.startsWith('http://localhost:')) {
+      res.status(403).json({ error: 'cross_origin_blocked', message: '跨域修改请求已拒绝。' });
+      return;
+    }
+  }
+  next();
+});
+
 app.use(express.json());
+
+// Sensitive local-data endpoints must never be cached.
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
+// ==========================================
+// Thin reverse proxy to the canonical gateway (8912).  The Express adapter
+// never re-implements business rules: it forwards /api/gateway/<path> to
+// <GATEWAY_URL>/api/<path> and relays the upstream status/body verbatim.
+// Used for organize-incremental, jobs polling, tasks PATCH, search,
+// projects and graph.  No CORS headers are set; this is same-origin.
+// ==========================================
+const GATEWAY_BASE = GATEWAY_URL.replace(/\/+$/, '');
+app.use('/api/gateway', async (req, res) => {
+  const target = `${GATEWAY_BASE}/api${req.url}`;
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  // Relay the browser's local-session cookie so the gateway authorizes writes.
+  if (req.headers.cookie) headers.cookie = req.headers.cookie;
+  const init: RequestInit = {
+    method: req.method,
+    headers,
+  };
+  if (!['GET', 'HEAD'].includes(req.method || '')) {
+    init.body = JSON.stringify(req.body ?? {});
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    init.signal = controller.signal;
+    const upstream = await fetch(target, init);
+    clearTimeout(timeout);
+    res.status(upstream.status);
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) res.setHeader('content-type', contentType);
+    // Relay Set-Cookie so the browser holds the gateway local session.
+    const upstreamCookies = upstream.headers.getSetCookie?.() ?? [];
+    for (const c of upstreamCookies) res.appendHeader('set-cookie', c);
+    const text = await upstream.text();
+    res.send(text);
+  } catch (error) {
+    res.status(503).json({
+      error: 'gateway_unavailable',
+      message: error instanceof Error ? error.message : 'gateway 不可用',
+    });
+  }
+});
 app.get('/api/runtime', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json(runtimeIdentity);
@@ -352,33 +455,61 @@ app.get('/api/conversations/live', (req, res) => {
 app.get('/api/conversations/:conversationId/messages', (req, res) => {
   const requestedLimit = Number(req.query.limit || 100);
   const limit = Number.isFinite(requestedLimit) ? Math.min(200, Math.max(1, requestedLimit)) : 100;
+  const targetMessageId = req.query.targetMessageId !== undefined
+    ? Number(req.query.targetMessageId)
+    : NaN;
   let database: DatabaseSync | null = null;
   try {
     database = openLibraryDb();
-    const ownerRow = database.prepare(`
-      SELECT sender_id
-      FROM messages
-      WHERE sender_id IS NOT NULL AND sender_id != ''
-      GROUP BY sender_id
-      ORDER BY COUNT(*) DESC
-      LIMIT 1
-    `).get() as { sender_id?: string } | undefined;
-    const ownerId = ownerRow?.sender_id || '';
-    const rows = database.prepare(`
-      SELECT id, sender_id, sender_name, sent_at, type, content
-      FROM messages
-      WHERE conversation_id = ? AND content IS NOT NULL AND length(trim(content)) > 0
-      ORDER BY sent_at DESC
-      LIMIT ?
-    `).all(req.params.conversationId, limit) as Record<string, unknown>[];
-    const items = rows.reverse().map(row => {
+    let rows: Record<string, unknown>[];
+    let anchored = false;
+
+    if (Number.isFinite(targetMessageId) && targetMessageId > 0) {
+      // Locate the anchor source message anywhere in the conversation history,
+      // not just within the most-recent window.  Return a window ending at the
+      // anchor so the UI can jump to a todo's originating message even when it
+      // is older than the last 100 loaded rows.
+      const anchor = database.prepare(`
+        SELECT id, sent_at FROM messages
+        WHERE conversation_id = ? AND id = ?
+      `).get(req.params.conversationId, targetMessageId) as { id: number; sent_at: number } | undefined;
+      if (!anchor) {
+        return res.status(404).json({
+          error: 'message_not_found',
+          message: '未找到指定来源消息，可能已超出当前加载范围。',
+        });
+      }
+      rows = (database.prepare(`
+        SELECT id, sender_id, sender_name, sent_at, type, content
+        FROM messages
+        WHERE conversation_id = ? AND content IS NOT NULL AND length(trim(content)) > 0
+          AND (sent_at < ? OR (sent_at = ? AND id <= ?))
+        ORDER BY sent_at DESC, id DESC
+        LIMIT ?
+      `).all(req.params.conversationId, anchor.sent_at, anchor.sent_at, targetMessageId, limit) as Record<string, unknown>[])
+        .reverse();
+      anchored = true;
+    } else {
+      rows = (database.prepare(`
+        SELECT id, sender_id, sender_name, sent_at, type, content
+        FROM messages
+        WHERE conversation_id = ? AND content IS NOT NULL AND length(trim(content)) > 0
+        ORDER BY sent_at DESC, id DESC
+        LIMIT ?
+      `).all(req.params.conversationId, limit) as Record<string, unknown>[]).reverse();
+    }
+
+    const items = rows.map(row => {
       const senderName = String(row.sender_name || '未知联系人');
+      const senderId = row.sender_id != null && String(row.sender_id) !== ''
+        ? String(row.sender_id)
+        : senderName;
       return {
         id: String(row.id),
         conversationId: req.params.conversationId,
-        senderId: row.sender_id === ownerId ? 'user-joyboy' : String(row.sender_id || senderName),
-        senderName: row.sender_id === ownerId ? CURRENT_USER.name : senderName,
-        senderAvatar: row.sender_id === ownerId ? CURRENT_USER.avatar : avatarDataUri(senderName),
+        senderId,
+        senderName,
+        senderAvatar: avatarDataUri(senderName),
         content: String(row.content),
         timestamp: new Date(Number(row.sent_at || 0)).toLocaleString('zh-CN', {
           month: '2-digit',
@@ -390,7 +521,7 @@ app.get('/api/conversations/:conversationId/messages', (req, res) => {
         hasAttachment: row.type !== 'text',
       };
     });
-    res.json({ source: 'sqlite-readonly', total: items.length, items });
+    res.json({ source: 'sqlite-readonly', total: items.length, anchored, anchorMessageId: anchored ? String(targetMessageId) : undefined });
   } catch (error) {
     res.status(503).json({
       error: 'local_conversation_messages_unavailable',

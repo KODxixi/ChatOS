@@ -530,7 +530,10 @@ def _pending_chunks_by_account(
         JOIN conversation_origins
           ON conversation_origins.conversation_id =
              retrieval_chunks.conversation_id
-        WHERE conversations.is_indexing_enabled = 1
+        WHERE COALESCE(
+                (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                 WHERE o.conversation_id = conversations.id),
+                conversations.is_indexing_enabled, 1) = 1
           AND (
                 retrieval_chunks.semantic_content_hash IS NULL
                 OR retrieval_chunks.semantic_content_hash

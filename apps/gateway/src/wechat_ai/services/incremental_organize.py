@@ -332,8 +332,38 @@ def _stage_tasks(
         _set_watermark(connection, conv_id, int(latest["sent_at"]), int(latest["id"]))
         stats.watermarksAdvanced += 1
 
+    # Persist conversations whose tasks were extracted but whose project
+    # projection has not yet succeeded.  The watermark has already advanced,
+    # so a later run with NO new messages would otherwise see affected=empty
+    # and skip project recovery entirely.  The projects stage re-projects
+    # these rows and clears them on success (see organize_pending).
+    pending_now = int(time.time() * 1000)
+    for conv_id in affected_conversations:
+        connection.execute(
+            "INSERT OR IGNORE INTO organize_pending(conversation_id, pending_since) VALUES (?, ?)",
+            (conv_id, pending_now),
+        )
+
     connection.commit()
     return affected_conversations
+
+
+def _load_pending_conversations(connection: sqlite3.Connection) -> set[str]:
+    """Return conversation_ids persisted as pending project projection."""
+    rows = connection.execute(
+        "SELECT conversation_id FROM organize_pending"
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _clear_pending(connection: sqlite3.Connection, conversation_ids: set[str]) -> None:
+    if not conversation_ids:
+        return
+    placeholders = ", ".join("?" for _ in conversation_ids)
+    connection.execute(
+        f"DELETE FROM organize_pending WHERE conversation_id IN ({placeholders})",
+        tuple(sorted(conversation_ids)),
+    )
 
 
 def _llm_filter_todos(
@@ -414,26 +444,39 @@ def _stage_projects(
     vault_root: Path,
     affected_conversations: set[str],
 ) -> None:
-    """Re-extract projects for affected conversations.
+    """Re-extract projects for affected conversations AND pending ones.
 
-    If no conversations had new messages, projectsUpdated stays 0.
-    Raises on extraction/write failure so the caller can report degraded.
+    ``organize_pending`` persists conversations whose task extraction succeeded
+    on an earlier run but whose project projection failed.  The watermark has
+    already advanced, so on a no-new-messages retry ``affected_conversations``
+    is empty; we must still re-project the pending rows or recovery silently
+    never happens.
+
+    Raises on extraction/write failure so the caller reports degraded AND
+    leaves the pending rows in place for the next retry.  On success every
+    processed conversation (affected + recovered pending) is cleared.
     """
     from .project_extractor import extract_projects
 
-    if not affected_conversations:
+    pending_conversations = _load_pending_conversations(connection)
+    to_process = set(affected_conversations) | pending_conversations
+
+    if not to_process:
         stats.projectsUpdated = 0
-        logger.info("organize.projects: no affected conversations, skipping")
+        logger.info("organize.projects: no affected/pending conversations, skipping")
         return
 
     projects = extract_projects(
         connection, vault_root=vault_root, min_messages=10,
-        conversation_ids=tuple(sorted(affected_conversations)),
+        conversation_ids=tuple(sorted(to_process)),
     )
     stats.projectsUpdated = len(projects)
+    # Projection wrote successfully: clear pending so we do not redo it.
+    _clear_pending(connection, to_process)
     logger.info(
-        "organize.projects: updated=%d (affected=%d)",
+        "organize.projects: updated=%d (affected=%d recovered_pending=%d)",
         stats.projectsUpdated, len(affected_conversations),
+        len(pending_conversations - affected_conversations),
     )
 
 

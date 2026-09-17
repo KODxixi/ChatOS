@@ -50,7 +50,12 @@ def project_graph(
 
     _delete_unsupported_content_graph(connection)
     _delete_disabled_conversation_graph(connection, condition, parameters)
-    condition = f"({condition}) AND conversations.is_indexing_enabled = 1"
+    condition = (
+        f"({condition}) AND COALESCE("
+        "(SELECT o.is_indexing_enabled FROM conversation_overrides o "
+        "WHERE o.conversation_id = conversations.id), "
+        "conversations.is_indexing_enabled, 1) = 1"
+    )
 
     app_nodes: dict[str, str] = {}
     for row in connection.execute(
@@ -154,7 +159,10 @@ def project_graph(
         f"({message_condition}) AND EXISTS ("
         "SELECT 1 FROM conversations "
         "WHERE conversations.id = messages.conversation_id "
-        "AND conversations.is_indexing_enabled = 1)"
+        "AND COALESCE("
+        "(SELECT o.is_indexing_enabled FROM conversation_overrides o "
+        "WHERE o.conversation_id = conversations.id), "
+        "conversations.is_indexing_enabled, 1) = 1)"
     )
     participant_edges: dict[tuple[str, str, str], str] = {}
     for row in connection.execute(
@@ -238,7 +246,10 @@ def project_graph(
         f"({part_condition}) AND EXISTS ("
         "SELECT 1 FROM conversations "
         "WHERE conversations.id = messages.conversation_id "
-        "AND conversations.is_indexing_enabled = 1)"
+        "AND COALESCE("
+        "(SELECT o.is_indexing_enabled FROM conversation_overrides o "
+        "WHERE o.conversation_id = conversations.id), "
+        "conversations.is_indexing_enabled, 1) = 1)"
     )
     content_edges: dict[tuple[str, str], str] = {}
     for row in connection.execute(
@@ -771,7 +782,10 @@ def _delete_disabled_conversation_graph(
             SELECT conversations.id
             FROM conversations
             WHERE {condition}
-              AND conversations.is_indexing_enabled = 0
+              AND COALESCE(
+                    (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                     WHERE o.conversation_id = conversations.id),
+                    conversations.is_indexing_enabled, 1) = 0
             """,
             parameters,
         )

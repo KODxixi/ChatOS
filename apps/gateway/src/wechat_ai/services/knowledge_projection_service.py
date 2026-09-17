@@ -197,7 +197,10 @@ def project_knowledge(
             SELECT conversations.id
             FROM conversations
             WHERE {conversation_condition}
-              AND conversations.is_indexing_enabled = 0
+              AND COALESCE(
+                    (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                     WHERE o.conversation_id = conversations.id),
+                    conversations.is_indexing_enabled, 1) = 0
         )
         """,
         conversation_parameters,
@@ -248,7 +251,10 @@ def project_knowledge(
           AND EXISTS (
                 SELECT 1 FROM conversations
                 WHERE conversations.id = messages.conversation_id
-                  AND conversations.is_indexing_enabled = 1
+                  AND COALESCE(
+                        (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                         WHERE o.conversation_id = conversations.id),
+                        conversations.is_indexing_enabled, 1) = 1
           )
           AND message_parts.status = 'resolved'
           AND message_parts.text_content <> ''

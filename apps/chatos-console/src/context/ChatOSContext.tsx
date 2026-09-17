@@ -306,17 +306,13 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (conversationRevisionRef.current === snapshot.revision) return;
         conversationRevisionRef.current = snapshot.revision;
 
-        setConversations(previous => {
-          const previousById = new Map(previous.map(item => [item.id, item]));
-          return snapshot.items.map(item => ({
-            ...item,
-            isFollowed: previousById.get(item.id)?.isFollowed ?? item.isFollowed,
-          }));
-        });
+        // The backend is the source of truth for isFollowed (it persists to
+        // conversation_overrides).  Do NOT overlay stale local state, otherwise
+        // a persisted star/unstar would be undone on the next poll.
+        setConversations(snapshot.items);
         setSelectedConversation(previous => {
           if (!previous) return snapshot.items[0] || null;
-          const refreshed = snapshot.items.find(item => item.id === previous.id);
-          return refreshed ? { ...refreshed, isFollowed: previous.isFollowed } : snapshot.items[0] || null;
+          return snapshot.items.find(item => item.id === previous.id) || snapshot.items[0] || null;
         });
         setEngineState(previous => ({
           ...previous,
@@ -360,6 +356,52 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => controller.abort();
   }, [conversationDataSource, selectedConversation?.id]);
 
+  // Load real todos from the gateway (derived `tasks` table).  These replace
+  // the prototype list once the database is reachable; completion/ignore are
+  // persisted via PATCH /api/gateway/tasks/:id.
+  useEffect(() => {
+    if (conversationDataSource !== 'database') return;
+    let active = true;
+    const loadRealTodos = async () => {
+      try {
+        const res = await fetch('/api/gateway/tasks?limit=300', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as { items?: Array<Record<string, unknown>> };
+        if (!active || !Array.isArray(data.items)) return;
+        const realTodos: TodoItem[] = data.items.map((t) => {
+          const gStatus = String(t.status || 'todo');
+          const isIgnored = gStatus === 'ignored';
+          const status: TodoStatus = gStatus === 'completed' || gStatus === 'done'
+            ? 'completed'
+            : 'pending';
+          return {
+            id: String(t.taskId || t.task_id || ''),
+            title: String(t.content || ''),
+            description: '',
+            status,
+            assigneeRole: 'other',
+            dueDate: String(t.dueDate || t.due_date || '待确认'),
+            isUrgent: t.priority === 'high',
+            isOverdue: false,
+            sourceMessageId: t.sourceMessageId != null ? String(t.sourceMessageId) : '',
+            sourceConversationId: String(t.conversationId || t.conversation_id || ''),
+            sourceConversationName: String(t.conversationTitle || ''),
+            sourceSnippet: String(t.content || ''),
+            evidenceText: t.senderName ? `来自 ${String(t.senderName)} 的会话任务` : '来自本地会话任务库',
+            isIgnored,
+            manualModified: false,
+            createdAt: new Date(Number(t.sentAt || Date.now())).toISOString(),
+            confidence: 'clear',
+          };
+        });
+        setTodos(realTodos);
+      } catch {
+        // Keep prototype todos if the gateway is unreachable.
+      }
+    };
+    void loadRealTodos();
+  }, [conversationDataSource]);
+
   // Global Ctrl/Cmd + K shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -375,54 +417,96 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Jump to specific message and open inspector
-  const jumpToMessage = useCallback((conversationId: string, messageId: string) => {
+  // Jump to a source message anywhere in history, not just the last 100 rows.
+  // When the message is older than the loaded window, ask the server to build
+  // a window anchored on it.  If it cannot be located we say so explicitly
+  // instead of pretending we highlighted it.
+  const jumpToMessage = useCallback(async (conversationId: string, messageId: string) => {
     const targetConv = conversations.find(c => c.id === conversationId);
-    if (targetConv) {
-      setSelectedConversation(targetConv);
-      setSelectedProject(null);
-      setSelectedTodo(null);
-      setSelectedKnowledgeItem(null);
+    if (!targetConv) return;
+    setSelectedConversation(targetConv);
+    setSelectedProject(null);
+    setSelectedTodo(null);
+    setSelectedKnowledgeItem(null);
+
+    try {
+      const res = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/messages?targetMessageId=${encodeURIComponent(messageId)}&limit=100`,
+        { cache: 'no-store' }
+      );
+      if (res.status === 404) {
+        showToast('未找到指定来源消息，可能已超出当前可加载范围。');
+        setHighlightedMessageId(null);
+        return;
+      }
+      if (!res.ok) throw new Error(`messages ${res.status}`);
+      const data = await res.json() as { items?: ChatMessage[] };
+      if (!Array.isArray(data.items) || data.items.length === 0) {
+        showToast('未找到指定来源消息。');
+        setHighlightedMessageId(null);
+        return;
+      }
+      setMessages(prev => ({ ...prev, [conversationId]: data.items! }));
       setHighlightedMessageId(messageId);
       setIsInspectorOpen(true);
       showToast(`已定位到会话「${targetConv.name}」中的原始消息`);
+    } catch {
+      showToast('定位原始消息失败，请稍后重试。');
+      setHighlightedMessageId(null);
     }
   }, [conversations, showToast]);
 
-  // Update Todo status with manual override protection
+  // Update Todo status: optimistic local update, then persist to the gateway
+  // derived `tasks` table.  A failed request rolls back the optimistic change
+  // and surfaces an explicit error toast (never silent success).
   const updateTodoStatus = useCallback((id: string, status: TodoStatus) => {
     if (modelDiagnosticStatus === 'simulate_offline') {
       showToast('⚠️ 仿真模式：模型服务不可用，任务状态更新失败已自动回滚');
       return false;
     }
 
+    const previous = todos.find(t => t.id === id);
     setTodos(prev =>
       prev.map(t => {
         if (t.id === id) {
-          return {
-            ...t,
-            status,
-            manualModified: true, // Manual flag protects from being resurrected
-          };
+          return { ...t, status, manualModified: true };
         }
         return t;
       })
     );
 
-    // Also update audit log
-    const target = todos.find(t => t.id === id);
+    const target = previous;
     if (target) {
       const logEntry: AuditLogEntry = {
         id: `audit-${Date.now()}`,
         timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
         action: `待办状态变更 -> ${status}`,
         type: 'manual_override',
-        details: `JoyBoy 人工调整任务「${target.title}」状态至 ${status}，已被系统标记为人工保护。`,
+        details: `人工调整任务「${target.title}」状态至 ${status}，已标记为人工保护。`,
         actor: 'JoyBoy',
       };
       setAuditLogs(prev => [logEntry, ...prev]);
       showToast(`待办已移动至「${status === 'draft' ? '草稿箱' : status === 'pending' ? '待处理' : status === 'in_progress' ? '进行中' : '已完成'}」`);
     }
+
+    const gatewayStatus = status === 'completed' ? 'completed' : 'todo';
+    void (async () => {
+      try {
+        const res = await fetch(`/api/gateway/tasks/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: gatewayStatus }),
+        });
+        if (!res.ok) throw new Error(`gateway returned ${res.status}`);
+      } catch {
+        if (previous) {
+          setTodos(prev => prev.map(t => t.id === id
+            ? { ...t, status: previous.status, manualModified: previous.manualModified }
+            : t));
+        }
+        showToast('待办状态更新失败，已回滚');
+      }
+    })();
     return true;
   }, [todos, modelDiagnosticStatus, showToast]);
 
@@ -434,16 +518,18 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [showToast]);
 
   const toggleIgnoreTodo = useCallback((id: string) => {
+    const previous = todos.find(t => t.id === id);
+    const nextIgnored = !previous?.isIgnored;
+
     setTodos(prev =>
       prev.map(t => {
         if (t.id === id) {
-          const nextIgnored = !t.isIgnored;
           const logEntry: AuditLogEntry = {
             id: `audit-${Date.now()}`,
             timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
             action: nextIgnored ? '人工忽略待办' : '撤销忽略待办',
             type: 'manual_override',
-            details: `JoyBoy ${nextIgnored ? '忽略' : '恢复'}任务「${t.title}」，后续增量扫描遵循该人工决策。`,
+            details: `${nextIgnored ? '忽略' : '恢复'}任务「${t.title}」，后续增量扫描遵循该人工决策。`,
             actor: 'JoyBoy',
           };
           setAuditLogs(l => [logEntry, ...l]);
@@ -453,7 +539,25 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return t;
       })
     );
-  }, [showToast]);
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/gateway/tasks/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: nextIgnored ? 'ignored' : 'todo' }),
+        });
+        if (!res.ok) throw new Error(`gateway returned ${res.status}`);
+      } catch {
+        if (previous) {
+          setTodos(prev => prev.map(t => t.id === id
+            ? { ...t, isIgnored: previous.isIgnored, manualModified: previous.manualModified }
+            : t));
+        }
+        showToast('忽略状态更新失败，已回滚');
+      }
+    })();
+  }, [todos, showToast]);
 
   const createTodo = useCallback((newTodo: Partial<TodoItem>) => {
     const item: TodoItem = {
@@ -617,7 +721,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAuditLogs(l => [logEntry, ...l]);
 
       try {
-        await fetch('/api/collaborative/shared-lists', {
+        const res = await fetch('/api/collaborative/shared-lists', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -628,8 +732,11 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             createdBy: CURRENT_USER,
           }),
         });
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
       } catch (err) {
-        console.warn('Server sync error:', err);
+        setSharedLists(prev => prev.filter(l => l.id !== newList.id));
+        showToast('共享清单保存失败，已回滚');
+        return null;
       }
 
       return newList;
@@ -648,8 +755,12 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       showToast(listToDelete ? `已删除共享清单「${listToDelete.title}」` : '已删除共享清单');
 
       try {
-        await fetch(`/api/collaborative/shared-lists/${listId}`, { method: 'DELETE' });
-      } catch (e) {}
+        const res = await fetch(`/api/collaborative/shared-lists/${listId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        if (listToDelete) setSharedLists(prev => [listToDelete!, ...prev]);
+        showToast('删除清单失败，已回滚');
+      }
     },
     [sharedLists, activeSharedListId, showToast]
   );
@@ -703,7 +814,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAuditLogs(l => [logEntry, ...l]);
 
       try {
-        await fetch(`/api/collaborative/shared-lists/${listId}/tasks`, {
+        const res = await fetch(`/api/collaborative/shared-lists/${listId}/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -715,7 +826,16 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             createdBy: CURRENT_USER,
           }),
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        setSharedLists(prev => prev.map(list =>
+          list.id === listId
+            ? { ...list, tasks: list.tasks.filter(t => t.id !== newTask.id) }
+            : list
+        ));
+        showToast('协作任务保存失败，已回滚');
+        return null;
+      }
 
       return newTask;
     },
@@ -768,7 +888,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAuditLogs(l => [logEntry, ...l]);
 
       try {
-        await fetch(`/api/collaborative/shared-lists/${listId}/tasks/${taskId}`, {
+        const res = await fetch(`/api/collaborative/shared-lists/${listId}/tasks/${taskId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -776,7 +896,24 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             completedBy: nextState ? targetUser : null,
           }),
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        setSharedLists(prev => prev.map(list => {
+          if (list.id === listId) {
+            return {
+              ...list,
+              tasks: list.tasks.map(t =>
+                t.id === taskId
+                  ? { ...t, isCompleted: !nextState, completedAt: undefined, completedBy: undefined }
+                  : t
+              ),
+            };
+          }
+          return list;
+        }));
+        showToast('协作任务状态更新失败，已回滚');
+        return !nextState;
+      }
 
       return nextState;
     },
@@ -795,10 +932,13 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
       showToast('协同任务已删除');
       try {
-        await fetch(`/api/collaborative/shared-lists/${listId}/tasks/${taskId}`, {
+        const res = await fetch(`/api/collaborative/shared-lists/${listId}/tasks/${taskId}`, {
           method: 'DELETE',
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        showToast('删除协作任务失败，请刷新后重试');
+      }
     },
     [showToast]
   );
@@ -818,12 +958,15 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
       showToast('任务已更新');
       try {
-        await fetch(`/api/collaborative/shared-lists/${listId}/tasks/${taskId}`, {
+        const res = await fetch(`/api/collaborative/shared-lists/${listId}/tasks/${taskId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updates),
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        showToast('协作任务更新失败，请刷新后重试');
+      }
     },
     [showToast]
   );
@@ -877,7 +1020,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAuditLogs(l => [logEntry, ...l]);
 
       try {
-        await fetch(`/api/collaborative/projects/${projectId}/comments`, {
+        const res = await fetch(`/api/collaborative/projects/${projectId}/comments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -885,7 +1028,20 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             author,
           }),
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        setProjectComments(prev => ({
+          ...prev,
+          [projectId]: (prev[projectId] || []).filter(c => c.id !== newComment.id),
+        }));
+        setProjects(prev => prev.map(p =>
+          p.id === projectId
+            ? { ...p, commentsCount: Math.max(0, (p.commentsCount || 1) - 1) }
+            : p
+        ));
+        showToast('评论保存失败，已回滚');
+        return null;
+      }
 
       return newComment;
     },
@@ -912,10 +1068,13 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       showToast('讨论评论已删除');
 
       try {
-        await fetch(`/api/collaborative/projects/${projectId}/comments/${commentId}`, {
+        const res = await fetch(`/api/collaborative/projects/${projectId}/comments/${commentId}`, {
           method: 'DELETE',
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        showToast('删除评论失败，请刷新后重试');
+      }
     },
     [showToast]
   );
@@ -952,44 +1111,54 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
 
       try {
-        await fetch(`/api/collaborative/projects/${projectId}/comments/${commentId}/reactions`, {
+        const res = await fetch(`/api/collaborative/projects/${projectId}/comments/${commentId}/reactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ emoji, userId: uId }),
         });
-      } catch (e) {}
+        if (!res.ok) throw new Error(`collaborative ${res.status}`);
+      } catch (e) {
+        showToast('表情反应同步失败，请刷新后重试');
+      }
     },
     []
   );
 
   const toggleFollowConversation = useCallback((id: string) => {
-    setConversations(prev =>
-      prev.map(c => {
-        if (c.id === id) {
-          const nextFollow = !c.isFollowed;
-          showToast(nextFollow ? `⭐ 已将「${c.name}」加入左侧星标会话` : `已从星标会话移除「${c.name}」`);
-          return {
-            ...c,
-            isFollowed: nextFollow,
-            priorityScore: nextFollow ? c.priorityScore + 25 : Math.max(20, c.priorityScore - 25),
-          };
-        }
-        return c;
-      })
-    );
+    const previous = conversations.find(c => c.id === id);
+    if (!previous) return;
+    const nextFollow = !previous.isFollowed;
 
-    setSelectedConversation(curr => {
-      if (curr && curr.id === id) {
-        const nextFollow = !curr.isFollowed;
-        return {
-          ...curr,
-          isFollowed: nextFollow,
-          priorityScore: nextFollow ? curr.priorityScore + 25 : Math.max(20, curr.priorityScore - 25),
-        };
-      }
-      return curr;
+    const applyOptimistic = (c: Conversation): Conversation => ({
+      ...c,
+      isFollowed: nextFollow,
+      priorityScore: nextFollow ? c.priorityScore + 25 : Math.max(20, c.priorityScore - 25),
     });
-  }, [showToast]);
+
+    setConversations(prev => prev.map(c => (c.id === id ? applyOptimistic(c) : c)));
+    setSelectedConversation(curr => (curr && curr.id === id ? applyOptimistic(curr) : curr));
+    showToast(nextFollow ? `⭐ 已将「${previous.name}」加入左侧星标会话` : `已从星标会话移除「${previous.name}」`);
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/gateway/conversations/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isFavorite: nextFollow }),
+        });
+        if (!res.ok) throw new Error(`gateway returned ${res.status}`);
+      } catch {
+        const rollback = (c: Conversation): Conversation => ({
+          ...c,
+          isFollowed: previous.isFollowed,
+          priorityScore: previous.priorityScore,
+        });
+        setConversations(prev => prev.map(c => (c.id === id ? rollback(c) : c)));
+        setSelectedConversation(curr => (curr && curr.id === id ? rollback(curr) : curr));
+        showToast('星标状态更新失败，已回滚');
+      }
+    })();
+  }, [conversations, showToast]);
 
   const setEnterpriseScale = useCallback(
     (scale: 'curated' | 'medium_120' | 'max_500') => {
@@ -1016,18 +1185,66 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   }, []);
 
-  // Frontend-only handoff: do not simulate scans, writes, or successful model work.
+  // Real incremental organize: POST to the gateway, poll the job until it
+  // leaves `running`, surface honest status (completed / degraded / failed),
+  // then re-read the live snapshot so derived state (todos, overrides) shows.
   const runIncrementalOrganize = useCallback(async () => {
-    setIsSyncing(false);
-    const message = modelDiagnosticStatus === 'simulate_offline'
-      ? '当前为故障演示，未执行真实整理或回滚'
-      : '增量整理服务尚未接入，未扫描或改写任何数据';
-    setEngineState(prev => ({
-      ...prev,
-      status: modelDiagnosticStatus === 'simulate_offline' ? 'error_fallback' : 'idle',
-    }));
-    showToast(message);
-    return { addedCount: 0, message };
+    if (modelDiagnosticStatus === 'simulate_offline') {
+      const message = '当前为故障演示，未执行真实整理或回滚';
+      setEngineState(prev => ({ ...prev, status: 'error_fallback' }));
+      showToast(message);
+      return { addedCount: 0, message };
+    }
+    setIsSyncing(true);
+    setEngineState(prev => ({ ...prev, status: 'syncing' }));
+    try {
+      const startRes = await fetch('/api/gateway/organize/incremental', { method: 'POST' });
+      if (!startRes.ok) throw new Error(`organize start ${startRes.status}`);
+      const job = await startRes.json() as { jobId?: string; id?: string };
+      const jobId = job.jobId || job.id;
+      if (!jobId) throw new Error('网关未返回任务句柄');
+
+      let finalStatus = 'running';
+      let result: Record<string, unknown> | null = null;
+      for (let i = 0; i < 180; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const jobRes = await fetch(`/api/gateway/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+        if (!jobRes.ok) throw new Error(`任务轮询 ${jobRes.status}`);
+        const jobData = await jobRes.json() as { status?: string; result?: Record<string, unknown> };
+        finalStatus = jobData.status || 'running';
+        result = jobData.result || null;
+        if (finalStatus !== 'running') break;
+      }
+      const addedCount = Number(result?.addedCount ?? result?.newTasks ?? result?.tasks ?? 0);
+      const message = finalStatus === 'completed'
+        ? `增量整理完成：处理 ${addedCount} 项`
+        : finalStatus === 'degraded'
+        ? `增量整理完成（部分降级）：${addedCount} 项，详情见日志`
+        : `增量整理失败：${finalStatus}`;
+      setEngineState(prev => ({
+        ...prev,
+        status: finalStatus === 'failed' ? 'error_fallback' : 'idle',
+        lastRunTimestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
+      }));
+      showToast(message);
+
+      // Re-read live conversations so derived overrides appear immediately.
+      try {
+        const snap = await fetch('/api/conversations/live', { cache: 'no-store' }).then(r => r.json() as { items?: Conversation[] });
+        if (Array.isArray(snap.items)) {
+          conversationRevisionRef.current = null;
+          setConversations(snap.items);
+        }
+      } catch { /* non-fatal */ }
+      return { addedCount, message };
+    } catch (e) {
+      const message = `增量整理失败：${e instanceof Error ? e.message : '网络错误'}`;
+      setEngineState(prev => ({ ...prev, status: 'error_fallback' }));
+      showToast(message);
+      return { addedCount: 0, message };
+    } finally {
+      setIsSyncing(false);
+    }
   }, [modelDiagnosticStatus, showToast]);
 
   const value = useMemo(
