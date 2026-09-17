@@ -250,9 +250,9 @@ def update_conversation(
 
     if "isIndexingEnabled" in updates:
         from .graph_service import project_graph
-        from .knowledge_projection_service import project_knowledge
+        from .knowledge_projection_service import rebuild_retrieval_indexes
 
-        project_knowledge(connection, conversation_ids=(conversation_id,))
+        rebuild_retrieval_indexes(connection, conversation_ids=(conversation_id,))
         project_graph(connection, conversation_ids=(conversation_id,))
     connection.commit()
     return get_conversation(connection, conversation_id)

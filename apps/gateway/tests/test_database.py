@@ -861,6 +861,7 @@ class DatabaseTests(unittest.TestCase):
 
     def test_failed_startup_recovery_keeps_facts_then_retries(self) -> None:
         database = load_database_module()
+        from wechat_ai.services.knowledge_projection_service import project_knowledge
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "wechat-ai.sqlite"
@@ -879,6 +880,8 @@ class DatabaseTests(unittest.TestCase):
                     ) VALUES ('team', 'team:1', 'Alice', 1000, 'text', 'launch')
                     """
                 )
+                # Import owns normalized parts; startup only repairs derived indexes.
+                project_knowledge(connection, build_indexes=False)
                 connection.execute(
                     "UPDATE source_accounts SET projection_status = 'degraded'"
                 )

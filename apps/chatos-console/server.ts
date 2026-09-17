@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { captureUiRuntime, resolveLibraryDb, UI_URL, GATEWAY_URL } from '../../scripts/entry-contract.mjs';
+import { proxyGateway } from './src/server/gateway-proxy.ts';
 import {
   INITIAL_SHARED_LISTS,
   INITIAL_PROJECT_COMMENTS,
@@ -363,70 +364,7 @@ app.use('/api', (_req, res, next) => {
 // projects and graph.  No CORS headers are set; this is same-origin.
 // ==========================================
 const GATEWAY_BASE = GATEWAY_URL.replace(/\/+$/, '');
-app.use('/api/gateway', async (req, res) => {
-  const target = `${GATEWAY_BASE}/api${req.url}`;
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  // Relay the browser's local-session cookie so the gateway authorizes writes.
-  if (req.headers.cookie) headers.cookie = req.headers.cookie;
-  const init: RequestInit = {
-    method: req.method,
-    headers,
-  };
-  if (!['GET', 'HEAD'].includes(req.method || '')) {
-    init.body = JSON.stringify(req.body ?? {});
-  }
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
-    init.signal = controller.signal;
-    const upstream = await fetch(target, init);
-    clearTimeout(timeout);
-    res.status(upstream.status);
-    // Relay response headers verbatim (content-type, content-length, and any
-    // gateway-driven headers).  We do NOT call upstream.text() — that would
-    // corrupt binary asset downloads and break SSE streaming.  Instead we
-    // pipe the upstream Web ReadableStream straight to the Express response.
-    const contentType = upstream.headers.get('content-type');
-    if (contentType) res.setHeader('content-type', contentType);
-    const contentLength = upstream.headers.get('content-length');
-    if (contentLength) res.setHeader('content-length', contentLength);
-    const cacheControl = upstream.headers.get('cache-control');
-    if (cacheControl) res.setHeader('cache-control', cacheControl);
-    // Relay Set-Cookie so the browser holds the gateway local session.
-    const upstreamCookies = upstream.headers.getSetCookie?.() ?? [];
-    for (const c of upstreamCookies) res.appendHeader('set-cookie', c);
-    if (!upstream.body) {
-      res.end();
-      return;
-    }
-    const reader = upstream.body.getReader();
-    const pump = async () => {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) { res.end(); break; }
-          res.write(Buffer.from(value));
-        }
-      } catch (err) {
-        if (!res.headersSent) {
-          res.status(502).json({ error: 'gateway_stream_error', message: String(err) });
-        } else {
-          res.destroy(err as Error);
-        }
-      }
-    };
-    void pump();
-  } catch (error) {
-    if (!res.headersSent) {
-      res.status(503).json({
-        error: 'gateway_unavailable',
-        message: error instanceof Error ? error.message : 'gateway 不可用',
-      });
-    } else {
-      res.destroy(error as Error);
-    }
-  }
-});
+app.use('/api/gateway', (req, res) => proxyGateway(req, res, GATEWAY_BASE));
 app.get('/api/runtime', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json(runtimeIdentity);

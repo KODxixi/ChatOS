@@ -34,11 +34,11 @@ def apply(ctx) -> None:
 
     def run_retrieval_job(_job: object, _context: object) -> object:
         from ..services.job_worker import JobResult
-        from ..services.knowledge_projection_service import project_knowledge
+        from ..services.knowledge_projection_service import rebuild_retrieval_indexes
 
         with closing(ctx.get("db.connection_factory")()) as projection_connection:
-            project_knowledge(projection_connection)
-            # closing() 只关连接、不 commit；project_knowledge 事务所有权归调用方，
+            rebuild_retrieval_indexes(projection_connection)
+            # closing() 只关连接、不 commit；索引事务所有权归调用方，
             # 不显式 commit 会在 close 时被回滚，导致检索投影结果丢失。
             projection_connection.commit()
         return JobResult()

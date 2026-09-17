@@ -194,7 +194,22 @@ def clean_text(t: str) -> str:
     return t[:8192]
 
 
+# Recheck the override atomically at the write, including after a slow model call.
+_STORE_ENABLED_VECTOR = """
+    INSERT OR REPLACE INTO message_embeddings
+        (message_id, conversation_id, embedding, model_version, status, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (
+        SELECT 1 FROM conversations c
+        LEFT JOIN conversation_overrides o ON o.conversation_id=c.id
+        WHERE c.id=? AND COALESCE(o.is_indexing_enabled,c.is_indexing_enabled,1)=1
+    )
+"""
+
+
 def embed_and_store(connection: sqlite3.Connection, message_id: int, conversation_id: str, text: str) -> bool:
+    if not _can_index_conversation(connection, conversation_id):
+        return False
     body = clean_text(text)
     if len(body) < 4:
         return False
@@ -202,20 +217,16 @@ def embed_and_store(connection: sqlite3.Connection, message_id: int, conversatio
     try:
         vec = _embed_request([body])[0]
         vec = vec / max(np.linalg.norm(vec), 1e-9)
-        connection.execute(
-            """INSERT OR REPLACE INTO message_embeddings
-               (message_id, conversation_id, embedding, model_version, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'indexed', ?, ?)""",
-            (str(message_id), conversation_id, vec.astype(np.float32).tobytes(), MODEL, now, now),
+        result = connection.execute(
+            _STORE_ENABLED_VECTOR,
+            (str(message_id), conversation_id, vec.astype(np.float32).tobytes(), MODEL, "indexed", now, now, conversation_id),
         )
-        return True
+        return result.rowcount == 1
     except Exception as e:
         logger.warning("embed msg %s failed: %s", message_id, e)
         connection.execute(
-            """INSERT OR REPLACE INTO message_embeddings
-               (message_id, conversation_id, embedding, model_version, status, created_at, updated_at)
-               VALUES (?, ?, '', ?, 'failed', ?, ?)""",
-            (str(message_id), conversation_id, MODEL, now, now),
+            _STORE_ENABLED_VECTOR,
+            (str(message_id), conversation_id, b"", MODEL, "failed", now, now, conversation_id),
         )
         return False
 
@@ -244,6 +255,26 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _can_index_conversation(connection: sqlite3.Connection, conversation_id: str) -> bool:
+    row = connection.execute(
+        """SELECT c.kind, c.title FROM conversations c
+           LEFT JOIN conversation_overrides o ON o.conversation_id=c.id
+           WHERE c.id=? AND COALESCE(o.is_indexing_enabled,c.is_indexing_enabled,1)=1""",
+        (conversation_id,),
+    ).fetchone()
+    if row is None or row[0] not in ("direct", "group"):
+        return False
+    if row[0] == "direct":
+        return True
+    if _is_noise_group(row[1] or ""):
+        return False
+    senders = connection.execute(
+        "SELECT COUNT(DISTINCT sender_id) FROM messages WHERE conversation_id=?",
+        (conversation_id,),
+    ).fetchone()[0]
+    return senders <= GROUP_SIZE_THRESHOLD
+
+
 def index_conversation(db_path: str, conversation_id: str) -> dict:
     """Index one conversation (runs in a background thread). Batched for GPU throughput."""
     INDEX_BATCH = 128
@@ -254,6 +285,8 @@ def index_conversation(db_path: str, conversation_id: str) -> dict:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=60000")
             conn.execute("PRAGMA synchronous=NORMAL")
+            if not _can_index_conversation(conn, conversation_id):
+                return {"conversationId": conversation_id, "messages": 0}
             # Only index messages not yet embedded
             rows = conn.execute(
                 """SELECT m.id, m.content FROM messages m
@@ -271,6 +304,8 @@ def index_conversation(db_path: str, conversation_id: str) -> dict:
 
             done = 0
             for start in range(0, total, INDEX_BATCH):
+                if not _can_index_conversation(conn, conversation_id):
+                    break
                 batch = rows[start : start + INDEX_BATCH]
                 texts = []
                 ids = []
@@ -292,13 +327,11 @@ def index_conversation(db_path: str, conversation_id: str) -> dict:
                     vecs = vecs / norms
                     now = int(time.time() * 1000)
                     records = [
-                        (str(mid), conversation_id, vecs[i].astype(np.float32).tobytes(), MODEL, "indexed", now, now)
+                        (str(mid), conversation_id, vecs[i].astype(np.float32).tobytes(), MODEL, "indexed", now, now, conversation_id)
                         for i, mid in enumerate(ids)
                     ]
                     conn.executemany(
-                        """INSERT OR REPLACE INTO message_embeddings
-                           (message_id, conversation_id, embedding, model_version, status, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        _STORE_ENABLED_VECTOR,
                         records,
                     )
                     conn.commit()
@@ -368,15 +401,16 @@ def search(connection: sqlite3.Connection, query: str, *, conversation_id: str |
         return []
     qv = _embed_request([clean_text(query)])[0]
     qv = qv / max(np.linalg.norm(qv), 1e-9)
-    if conversation_id:
-        rows = connection.execute(
-            "SELECT message_id, conversation_id, embedding FROM message_embeddings WHERE status='indexed' AND conversation_id=?",
-            (conversation_id,),
-        ).fetchall()
-    else:
-        rows = connection.execute(
-            "SELECT message_id, conversation_id, embedding FROM message_embeddings WHERE status='indexed'"
-        ).fetchall()
+    rows = connection.execute(
+        """SELECT e.message_id, e.conversation_id, e.embedding
+           FROM message_embeddings e
+           JOIN conversations c ON c.id=e.conversation_id
+           LEFT JOIN conversation_overrides o ON o.conversation_id=c.id
+           WHERE e.status='indexed'
+             AND COALESCE(o.is_indexing_enabled,c.is_indexing_enabled,1)=1"""
+        + (" AND e.conversation_id=?" if conversation_id is not None else ""),
+        (conversation_id,) if conversation_id is not None else (),
+    ).fetchall()
     if not rows:
         return []
     mat = np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])

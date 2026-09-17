@@ -72,7 +72,7 @@ def recover_knowledge_indexes(
     from .services.graph_service import project_graph
     from .services.knowledge_projection_service import (
         RETRIEVAL_INDEX_VERSION,
-        project_knowledge,
+        rebuild_retrieval_indexes,
     )
 
     is_degraded = connection.execute(
@@ -90,7 +90,13 @@ def recover_knowledge_indexes(
     _set_projection_status(connection, "indexing")
     connection.commit()
     try:
-        project_knowledge(connection)
+        missing_import_parts = connection.execute(
+            "SELECT 1 FROM messages m WHERE NOT EXISTS "
+            "(SELECT 1 FROM message_parts p WHERE p.message_id=m.id) LIMIT 1"
+        ).fetchone()
+        if missing_import_parts is not None:
+            raise ValueError("Imported message parts are missing; explicit import repair is required")
+        rebuild_retrieval_indexes(connection)
         project_graph(connection)
     except Exception:
         connection.rollback()

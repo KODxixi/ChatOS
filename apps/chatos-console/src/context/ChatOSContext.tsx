@@ -203,10 +203,12 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [activeAuxModal, setActiveAuxModal] = useState<'audit' | 'graph' | 'engine' | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // When jumpToMessage switches conversations it issues its own anchored
-  // fetch; the auto-load effect below must skip exactly one run so a regular
-  // recent-window fetch cannot overwrite the anchored window it just set.
-  const suppressMessagesEffectRef = useRef(false);
+  // Ordinary and anchored windows share one request lifetime. Suppression is
+  // tied to the jump's selection change, never an unrelated future selection.
+  const suppressMessagesEffectRef = useRef<string | null>(null);
+  const messageRequestVersionRef = useRef(0);
+  const messageAnchorVersionRef = useRef<number | null>(null);
+  const messageControllerRef = useRef<AbortController | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -345,25 +347,47 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   useEffect(() => {
-    if (suppressMessagesEffectRef.current) {
-      suppressMessagesEffectRef.current = false;
+    if (suppressMessagesEffectRef.current === selectedConversation?.id) {
+      suppressMessagesEffectRef.current = null;
       return;
     }
+    suppressMessagesEffectRef.current = null;
+    messageControllerRef.current?.abort();
+    const requestVersion = ++messageRequestVersionRef.current;
+    setHighlightedMessageId(null);
     if (conversationDataSource !== 'database' || !selectedConversation) return;
     const controller = new AbortController();
+    messageControllerRef.current = controller;
     fetch(`/api/conversations/${encodeURIComponent(selectedConversation.id)}/messages?limit=100`, {
       cache: 'no-store',
       signal: controller.signal,
     })
       .then(response => response.ok ? response.json() : null)
       .then(data => {
-        if (Array.isArray(data?.items)) {
+        if (!controller.signal.aborted && requestVersion === messageRequestVersionRef.current && Array.isArray(data?.items)) {
           setMessages(previous => ({ ...previous, [selectedConversation.id]: data.items }));
         }
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [conversationDataSource, selectedConversation?.id]);
+  }, [conversationDataSource, selectedConversation?.id, activeWorkspace]);
+
+  // Closing the inspector dismisses any pending jump; opening it does not
+  // trigger an ordinary fetch that could replace the anchored window.
+  useEffect(() => {
+    if (!isInspectorOpen) return;
+    return () => {
+      if (messageAnchorVersionRef.current !== messageRequestVersionRef.current) return;
+      ++messageRequestVersionRef.current;
+      messageControllerRef.current?.abort();
+      suppressMessagesEffectRef.current = null;
+    };
+  }, [isInspectorOpen]);
+
+  useEffect(() => () => {
+    ++messageRequestVersionRef.current;
+    messageControllerRef.current?.abort();
+  }, []);
 
   // Load real todos from the gateway (derived `tasks` table).  These replace
   // the prototype list once the database is reachable; completion/ignore are
@@ -433,7 +457,14 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const jumpToMessage = useCallback(async (conversationId: string, messageId: string) => {
     const targetConv = conversations.find(c => c.id === conversationId);
     if (!targetConv) return;
-    suppressMessagesEffectRef.current = true;
+    messageControllerRef.current?.abort();
+    const controller = new AbortController();
+    messageControllerRef.current = controller;
+    const requestVersion = ++messageRequestVersionRef.current;
+    messageAnchorVersionRef.current = requestVersion;
+    const isCurrentRequest = () => !controller.signal.aborted && requestVersion === messageRequestVersionRef.current;
+    suppressMessagesEffectRef.current = selectedConversation?.id !== conversationId ? conversationId : null;
+    setHighlightedMessageId(null);
     setSelectedConversation(targetConv);
     setSelectedProject(null);
     setSelectedTodo(null);
@@ -442,8 +473,9 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const res = await fetch(
         `/api/conversations/${encodeURIComponent(conversationId)}/messages?targetMessageId=${encodeURIComponent(messageId)}&limit=100`,
-        { cache: 'no-store' }
+        { cache: 'no-store', signal: controller.signal }
       );
+      if (!isCurrentRequest()) return;
       if (res.status === 404) {
         showToast('未找到指定来源消息，可能已超出当前可加载范围。');
         setHighlightedMessageId(null);
@@ -451,6 +483,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       if (!res.ok) throw new Error(`messages ${res.status}`);
       const data = await res.json() as { items?: ChatMessage[] };
+      if (!isCurrentRequest()) return;
       if (!Array.isArray(data.items) || data.items.length === 0) {
         showToast('未找到指定来源消息。');
         setHighlightedMessageId(null);
@@ -461,19 +494,22 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsInspectorOpen(true);
       showToast(`已定位到会话「${targetConv.name}」中的原始消息`);
     } catch {
+      if (!isCurrentRequest()) return;
       showToast('定位原始消息失败，请稍后重试。');
       setHighlightedMessageId(null);
       // The auto-load effect was suppressed; load the recent window so the
       // conversation is not left empty after a failed anchor.
       try {
-        const fb = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`, { cache: 'no-store' });
+        const fb = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=100`, {
+          cache: 'no-store', signal: controller.signal,
+        });
         if (fb.ok) {
           const fbData = await fb.json();
-          if (Array.isArray(fbData?.items)) setMessages(prev => ({ ...prev, [conversationId]: fbData.items }));
+          if (isCurrentRequest() && Array.isArray(fbData?.items)) setMessages(prev => ({ ...prev, [conversationId]: fbData.items }));
         }
       } catch { /* leave existing messages */ }
     }
-  }, [conversations, showToast]);
+  }, [conversations, selectedConversation?.id, showToast]);
 
   // Update Todo status: optimistic local update, then persist to the gateway
   // derived `tasks` table.  A failed request rolls back the optimistic change

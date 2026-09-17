@@ -31,7 +31,9 @@ def project_knowledge(
     source_account_id: str = DEFAULT_WECHAT_ACCOUNT_ID,
     build_indexes: bool = True,
 ) -> ProjectionResult:
-    """Project normalized messages into idempotent knowledge facts.
+    """Import normalized messages into knowledge facts (writes imported parts).
+
+    Runtime state changes must use ``rebuild_retrieval_indexes`` instead.
 
     ``conversation_ids=None`` deliberately means the global library. An empty
     iterable means no conversations and never falls back to a current thread.
@@ -189,6 +191,23 @@ def project_knowledge(
                 scope,
             ),
         )
+
+    return rebuild_retrieval_indexes(connection, conversation_ids=scope)
+
+
+def rebuild_retrieval_indexes(
+    connection: sqlite3.Connection,
+    *,
+    conversation_ids: Iterable[str] | None = None,
+) -> ProjectionResult:
+    """Rebuild derived search data without modifying any imported facts.
+
+    Missing imported parts require an explicit import, not silent backfilling
+    during a user PATCH, background index job or startup recovery.
+    """
+    scope = _normalize_scope(conversation_ids)
+    conversation_condition, conversation_parameters = _condition("conversations.id", scope)
+    message_condition, message_parameters = _condition("messages.conversation_id", scope)
 
     connection.execute(
         f"""
