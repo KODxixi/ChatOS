@@ -16,8 +16,6 @@ export interface AgentRuntimeConfig {
   workspaceDir: string;
   /** WebSocket server port */
   wsPort: number;
-  /** HTTP API port (same as wsPort, REST endpoints) */
-  httpPort: number;
   /** SQLite DB path for session persistence */
   dbPath: string;
   /** Log directory */
@@ -48,7 +46,6 @@ export const defaultConfig: AgentRuntimeConfig = {
   embeddingModel: 'text-embedding-qwen3-embedding-8b',
   workspaceDir: path.join(os.homedir(), 'ChatOS', 'workspace'),
   wsPort: 8913,
-  httpPort: 8913,
   dbPath: path.join(os.homedir(), 'ChatOS', 'data', 'agent-runtime.sqlite'),
   logDir: path.join(os.homedir(), 'ChatOS', 'logs'),
   maxToolIterations: 20,
@@ -58,6 +55,38 @@ export const defaultConfig: AgentRuntimeConfig = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
 };
 
+function localHttpUrl(name: string, value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be a valid URL`);
+  }
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+  if (url.protocol !== 'http:' || !loopback) throw new Error(`${name} must use local http`);
+  return url.toString().replace(/\/$/, '');
+}
+
+function integerInRange(name: string, value: number, min: number, max: number): number {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer from ${min} to ${max}`);
+  }
+  return value;
+}
+
 export function loadConfig(overrides?: Partial<AgentRuntimeConfig>): AgentRuntimeConfig {
-  return { ...defaultConfig, ...overrides };
+  const config = { ...defaultConfig, ...overrides };
+  config.lmStudioUrl = localHttpUrl('lmStudioUrl', config.lmStudioUrl);
+  config.embeddingUrl = localHttpUrl('embeddingUrl', config.embeddingUrl);
+  config.wsPort = integerInRange('wsPort', config.wsPort, 0, 65_535);
+  config.maxToolIterations = integerInRange('maxToolIterations', config.maxToolIterations, 1, 100);
+  config.modelTimeoutMs = integerInRange('modelTimeoutMs', config.modelTimeoutMs, 1, 600_000);
+  config.maxTokens = integerInRange('maxTokens', config.maxTokens, 1, 1_000_000);
+  if (!Number.isFinite(config.temperature) || config.temperature < 0 || config.temperature > 2) {
+    throw new Error('temperature must be from 0 to 2');
+  }
+  config.workspaceDir = path.resolve(config.workspaceDir);
+  config.dbPath = path.resolve(config.dbPath);
+  config.logDir = path.resolve(config.logDir);
+  return config;
 }

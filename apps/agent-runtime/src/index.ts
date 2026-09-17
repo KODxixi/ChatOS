@@ -12,16 +12,22 @@ fs.mkdirSync(config.logDir, { recursive: true });
 
 const server = new AgentRuntimeServer(config);
 
-process.on('SIGINT', () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('\n[AgentRuntime] shutting down...');
-  server.stop();
-  process.exit(0);
-});
+  await server.stop();
+};
+const requestShutdown = () => {
+  void shutdown().catch((err) => {
+    console.error('[AgentRuntime] shutdown failed:', err);
+    process.exitCode = 1;
+  });
+};
 
-process.on('SIGTERM', () => {
-  server.stop();
-  process.exit(0);
-});
+process.on('SIGINT', requestShutdown);
+process.on('SIGTERM', requestShutdown);
 
 server.start().catch((err) => {
   console.error('[AgentRuntime] fatal:', err);

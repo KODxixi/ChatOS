@@ -5,7 +5,6 @@ import { LocalModelClient, type AgentEvent } from './LocalModelClient.js';
 import { ToolRegistry } from './ToolRegistry.js';
 import { loadConfig } from './config.js';
 import fs from 'node:fs';
-import path from 'node:path';
 
 async function main() {
   const config = loadConfig();
@@ -31,7 +30,8 @@ async function main() {
   console.log(`[demo] health: ok=${health.ok} model=${health.model} error=${health.error || 'none'}`);
   if (!health.ok) {
     console.error('[demo] LM Studio not reachable. Is it running on :1234?');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // 监听事件
@@ -66,10 +66,9 @@ async function main() {
   const result = await client.runTurn(messages);
   console.log(`\n[demo] final: ${result.content.slice(0, 300)}`);
   console.log(`[demo] done.`);
-  process.exit(0);
 }
 
 main().catch((err) => {
   console.error('[demo] fatal:', err);
-  process.exit(1);
+  process.exitCode = 1;
 });
