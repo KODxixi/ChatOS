@@ -62,3 +62,30 @@ test('unbound demonstration identity does not depend on a broken external avatar
   }).outputText;
   assert.match(new Function(js)().avatar, /^data:image\/svg\+xml/);
 });
+
+test('failed images use one local fallback without a retry loop or false original-image claim', () => {
+  const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let handler;
+  const visit = n => {
+    if (ts.isJsxAttribute(n) && n.name.getText(source) === 'onErrorCapture') handler = n.initializer.expression.getText(source);
+    ts.forEachChild(n, visit);
+  };
+  visit(source);
+  assert.ok(handler, 'the application must handle failed avatars/thumbnails');
+  const fallback = source.statements.flatMap(s => ts.isVariableStatement(s) ? [...s.declarationList.declarations] : [])
+    .find(d => d.name.getText(source) === 'UNAVAILABLE_IMAGE');
+  const js = ts.transpileModule(`const UNAVAILABLE_IMAGE=${fallback.initializer.getText(source)}; return ${handler};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  class Image { src = 'https://unavailable.test/image'; alt = 'Preview'; title = ''; }
+  const callback = new Function('HTMLImageElement', js)(Image);
+  const image = new Image();
+  callback({ target: image });
+  assert.match(image.src, /^data:image\/svg\+xml/);
+  assert.match(image.title, /未加载|加载失败/);
+  const previous = { ...image };
+  callback({ target: image });
+  assert.deepEqual({ ...image }, previous);
+  callback({ target: {} });
+});

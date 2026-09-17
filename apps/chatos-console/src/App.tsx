@@ -14,6 +14,8 @@ import { CreateModal } from './components/CreateModal';
 import { ThinkingCopilotModal } from './components/ThinkingCopilotModal';
 import { CheckCircle, AlertCircle } from 'lucide-react';
 
+const UNAVAILABLE_IMAGE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="12" fill="#242426"/><path d="M25 28h46v40H25zM25 60l15-16 13 14 7-8 11 12" fill="none" stroke="#a1a1aa" stroke-width="3"/><circle cx="61" cy="39" r="4" fill="#a1a1aa"/></svg>')}`;
+
 const ChatOSMain: React.FC = () => {
   const { activeWorkspace, isInspectorOpen, toastMessage } = useChatOS();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
@@ -30,6 +32,13 @@ const ChatOSMain: React.FC = () => {
       data-gary-density="balanced"
       data-gary-background="light-rays"
       data-gary-light-scope
+      onErrorCapture={event => {
+        const image = event.target;
+        if (image instanceof HTMLImageElement && image.src !== UNAVAILABLE_IMAGE) {
+          image.title = `${image.alt || '图片'}：原图未加载，显示本地占位图`;
+          image.src = UNAVAILABLE_IMAGE;
+        }
+      }}
     >
       <div className="gary-scene chatos-scene" data-gary-scene-engine="light-rays" aria-hidden="true" />
 
