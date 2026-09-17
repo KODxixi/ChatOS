@@ -1,25 +1,19 @@
-/* Gary-UI base tokens — canonical source: C:\AI\UI\gary-ui\tokens\base.css */
-@import 'C:/AI/UI/gary-ui/tokens/base.css';
+@import './styles/gary-base.css';
+@import './styles/demo.css';
 
-:root {
-  color-scheme: dark;
-}
+:root { color-scheme: dark; }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #root { height: 100%; }
 
 body {
-  font-family: 'Helvetica Neue', Helvetica, Arial, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
-  background: #000000;
-  color: var(--gary-color-text-primary, #ffffff);
-  min-height: 100vh;
+  font-family: var(--gary-font-sans);
+  background: #000;
+  color: var(--demo-ink);
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-#root {
-  width: 100vw;
-  height: 100vh;
-}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }

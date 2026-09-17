@@ -16,6 +16,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8912',
         changeOrigin: true,
       },
+      '/agent-api': {
+        target: 'http://127.0.0.1:8913',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/agent-api/, ''),
+      },
     },
   },
 })
