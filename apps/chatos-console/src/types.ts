@@ -69,6 +69,117 @@ export interface ChatMessage {
 export type TodoStatus = 'draft' | 'pending' | 'in_progress' | 'completed';
 export type TodoRole = 'i_am_responsible' | 'i_promised' | 'i_need_follow_up' | 'other';
 
+/**
+ * Round-trip status mapping between the gateway `tasks.status` column and the
+ * frontend kanban `TodoStatus`.  These tiny pure functions are imported by BOTH
+ * the initial real-todo load and the post-organize reload (so they can never
+ * drift apart), and by the console verify script — the production mapping is
+ * exercised directly, never re-copied.
+ *
+ * Accepted gateway raw statuses:
+ *   todo | pending | in_progress | draft | completed | done | ignored
+ * - done / completed            -> frontend completed
+ * - draft / in_progress          -> preserved 1:1 (a user-chosen state survives reload)
+ * - todo / pending (and unknown) -> frontend pending
+ * - ignored                     -> surfaced via the `isIgnored` flag (ignored is NOT a
+ *                                  kanban column; the row's in-flight status defaults to
+ *                                  pending but the flag keeps it out of the normal view).
+ */
+export function mapGatewayStatus(gatewayStatus: string): { status: TodoStatus; isIgnored: boolean } {
+  const raw = gatewayStatus || 'todo';
+  const isIgnored = raw === 'ignored';
+  let status: TodoStatus;
+  switch (raw) {
+    case 'completed':
+    case 'done':
+      status = 'completed';
+      break;
+    case 'draft':
+      status = 'draft';
+      break;
+    case 'in_progress':
+      status = 'in_progress';
+      break;
+    case 'pending':
+    case 'todo':
+    default:
+      status = 'pending';
+      break;
+  }
+  return { status, isIgnored };
+}
+
+/**
+ * Reverse mapping used when persisting a kanban change.  Each frontend state
+ * maps to a gateway status that maps back to the SAME frontend state, so
+ * draft / pending / in_progress / completed survive save + reload round-trips.
+ * (The old code collapsed every non-completed state to 'todo', which on reload
+ * became 'pending' and silently lost draft/in_progress.)
+ */
+export function mapTodoStatusToGateway(status: TodoStatus): string {
+  switch (status) {
+    case 'completed':
+      return 'completed';
+    case 'draft':
+      return 'draft';
+    case 'in_progress':
+      return 'in_progress';
+    case 'pending':
+      return 'pending';
+  }
+}
+
+/**
+ * Terminal outcomes of an incremental-organize job.  Once the job reaches one
+ * of these, polling MUST stop immediately.  queued / running / retrying (and any
+ * non-terminal value) keep polling — they are NOT done yet.
+ */
+export const ORGANIZE_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'degraded',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+
+export function isOrganizeTerminalStatus(status: string): boolean {
+  return ORGANIZE_TERMINAL_STATUSES.has(status);
+}
+
+/**
+ * Honest post-poll outcome: engine status + toast message.
+ *
+ * A job that exhausts all polls WITHOUT reaching a terminal status is a TIMEOUT.
+ * It must NOT fall back to idle (that would fake success).  failed / cancelled /
+ * interrupted / timeout all map to `error_fallback` with a message that names
+ * the actual outcome instead of pretending it finished.
+ */
+export function summarizeOrganizeOutcome(
+  finalStatus: string,
+  addedCount: number,
+): { engineStatus: 'idle' | 'error_fallback'; message: string; timedOut: boolean } {
+  if (!isOrganizeTerminalStatus(finalStatus)) {
+    return {
+      engineStatus: 'error_fallback',
+      timedOut: true,
+      message: `增量整理超时：轮询已耗尽仍未完成（当前状态：${finalStatus || 'unknown'}），未伪装成功`,
+    };
+  }
+  switch (finalStatus) {
+    case 'completed':
+      return { engineStatus: 'idle', timedOut: false, message: `增量整理完成：处理 ${addedCount} 项` };
+    case 'degraded':
+      return { engineStatus: 'idle', timedOut: false, message: `增量整理完成（部分降级）：${addedCount} 项，详情见日志` };
+    case 'failed':
+      return { engineStatus: 'error_fallback', timedOut: false, message: `增量整理失败：${finalStatus}` };
+    case 'cancelled':
+      return { engineStatus: 'error_fallback', timedOut: false, message: `增量整理已被取消：${finalStatus}` };
+    case 'interrupted':
+    default:
+      return { engineStatus: 'error_fallback', timedOut: false, message: `增量整理被中断：${finalStatus}` };
+  }
+}
+
 export interface TodoItem {
   id: string;
   title: string;

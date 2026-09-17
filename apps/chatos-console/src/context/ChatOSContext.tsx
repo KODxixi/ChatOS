@@ -14,6 +14,10 @@ import {
   SharedTask,
   ProjectComment,
   MindMapBiLink,
+  mapGatewayStatus,
+  mapTodoStatusToGateway,
+  isOrganizeTerminalStatus,
+  summarizeOrganizeOutcome,
 } from '../types';
 import {
   CURRENT_USER,
@@ -402,11 +406,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const data = await res.json() as { items?: Array<Record<string, unknown>> };
         if (!active || !Array.isArray(data.items)) return;
         const realTodos: TodoItem[] = data.items.map((t) => {
-          const gStatus = String(t.status || 'todo');
-          const isIgnored = gStatus === 'ignored';
-          const status: TodoStatus = gStatus === 'completed' || gStatus === 'done'
-            ? 'completed'
-            : 'pending';
+          const { status, isIgnored } = mapGatewayStatus(String(t.status || 'todo'));
           return {
             id: String(t.taskId || t.task_id || ''),
             title: String(t.content || ''),
@@ -544,7 +544,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       showToast(`待办已移动至「${status === 'draft' ? '草稿箱' : status === 'pending' ? '待处理' : status === 'in_progress' ? '进行中' : '已完成'}」`);
     }
 
-    const gatewayStatus = status === 'completed' ? 'completed' : 'todo';
+    const gatewayStatus = mapTodoStatusToGateway(status);
     void (async () => {
       try {
         const res = await fetch(`/api/gateway/tasks/${encodeURIComponent(id)}`, {
@@ -1284,9 +1284,10 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let finalStatus = 'running';
       let result: Record<string, unknown> | null = null;
-      // Only these are terminal.  queued / running / retrying / pending all
-      // keep polling — a queued or retrying job is NOT done yet.
-      const TERMINAL = new Set(['completed', 'failed', 'degraded']);
+      // Terminal outcomes live in the shared predicate.  queued / running /
+      // retrying (and any non-terminal value) keep polling — they are NOT done.
+      // If we exhaust all 600 polls without reaching a terminal status that is a
+      // TIMEOUT: reported honestly below (never faked as idle success).
       for (let i = 0; i < 600; i++) {
         await new Promise(r => setTimeout(r, 1000));
         const jobRes = await fetch(`/api/gateway/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
@@ -1294,17 +1295,16 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const jobData = await jobRes.json() as { status?: string; result?: Record<string, unknown> };
         finalStatus = jobData.status || 'running';
         result = jobData.result || null;
-        if (TERMINAL.has(finalStatus)) break;
+        if (isOrganizeTerminalStatus(finalStatus)) break;
       }
       const addedCount = Number(result?.addedCount ?? result?.newTasks ?? result?.tasks ?? 0);
-      const message = finalStatus === 'completed'
-        ? `增量整理完成：处理 ${addedCount} 项`
-        : finalStatus === 'degraded'
-        ? `增量整理完成（部分降级）：${addedCount} 项，详情见日志`
-        : `增量整理失败：${finalStatus}`;
+      // Honest outcome: completed/degraded -> idle; failed/cancelled/interrupted
+      // and timeout (loop exhausted without a terminal status) -> error_fallback.
+      const outcome = summarizeOrganizeOutcome(finalStatus, addedCount);
+      const message = outcome.message;
       setEngineState(prev => ({
         ...prev,
-        status: finalStatus === 'failed' ? 'error_fallback' : 'idle',
+        status: outcome.engineStatus,
         lastRunTimestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
       }));
       showToast(message);
@@ -1324,9 +1324,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const todoData = await todoRes.json() as { items?: Array<Record<string, unknown>> };
           if (Array.isArray(todoData.items)) {
             const realTodos: TodoItem[] = todoData.items.map((t) => {
-              const gStatus = String(t.status || 'todo');
-              const isIgnored = gStatus === 'ignored';
-              const status: TodoStatus = gStatus === 'completed' || gStatus === 'done' ? 'completed' : 'pending';
+              const { status, isIgnored } = mapGatewayStatus(String(t.status || 'todo'));
               return {
                 id: String(t.taskId || ''),
                 title: String(t.content || ''),

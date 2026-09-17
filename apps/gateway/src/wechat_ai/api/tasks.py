@@ -26,10 +26,14 @@ from ..services.conversation_service import ConnectionFactory
 logger = logging.getLogger(__name__)
 
 # Allowed task status / priority values.  Kept in one place so the API contract
-# and the UI status mapping agree.  Raw task lifecycle: todo -> completed;
-# ignored is a user choice to hide the item.  `done` is accepted as an alias
-# for completed (some older rows use it).
-TASK_STATUSES = frozenset({"todo", "completed", "ignored", "done"})
+# and the UI status mapping agree.  Raw extraction still creates 'todo' rows;
+# the console kanban can additionally persist 'pending' / 'draft' / 'in_progress'
+# so a user-chosen state survives a save + reload round-trip.  'ignored' is a
+# user choice to hide the item, and 'done' is accepted as an alias for
+# completed (some older rows use it).
+TASK_STATUSES = frozenset(
+    {"todo", "pending", "in_progress", "draft", "completed", "ignored", "done"}
+)
 TASK_PRIORITIES = frozenset({"low", "medium", "high"})
 
 
@@ -37,9 +41,12 @@ class TaskPatch(BaseModel):
     """Body for PATCH /api/tasks/{task_id}.  Both fields optional; at least
     one must be provided (enforced in the handler).  Values are validated
     against the task lifecycle enums so a UI typo cannot silently persist an
-    unknown status (e.g. mapping draft/in_progress straight to todo)."""
+    unknown status.  The four kanban states (draft / pending / in_progress /
+    completed) are all legal so the console round-trips honestly."""
 
-    status: Literal["todo", "completed", "ignored", "done"] | None = None
+    status: Literal[
+        "todo", "pending", "in_progress", "draft", "completed", "ignored", "done"
+    ] | None = None
     priority: Literal["low", "medium", "high"] | None = None
 
 
