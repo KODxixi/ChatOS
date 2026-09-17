@@ -348,6 +348,10 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
       // Apply pan and zoom transform
       ctx.translate(transformRef.current.x, transformRef.current.y);
       ctx.scale(transformRef.current.k, transformRef.current.k);
+      // Keep simulation data intact; skip expensive offscreen labels and glows.
+      const { x, y, k } = transformRef.current;
+      const left = -x / k - 160, right = (width - x) / k + 160;
+      const top = -y / k - 160, bottom = (height - y) / k + 160;
 
       const simNodes = simulationRef.current?.nodes() || [];
       const linkForce = simulationRef.current?.force('link') as d3.ForceLink<MindMapNode, any>;
@@ -373,6 +377,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
         const source = link.source;
         const target = link.target;
         if (!source || !target || source.x == null || target.x == null) return;
+        if (Math.max(source.x, target.x) < left || Math.min(source.x, target.x) > right ||
+            Math.max(source.y, target.y) < top || Math.min(source.y, target.y) > bottom) return;
 
         const isConnectedToEgo =
           !egoConnectedIds || (egoConnectedIds.has(source.id) && egoConnectedIds.has(target.id));
@@ -449,6 +455,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
       // 3. Draw Nodes with Specialized Visual Archetypes (Date, Project, Conversation)
       simNodes.forEach(node => {
         if (node.x == null || node.y == null) return;
+        if (node.x < left || node.x > right || node.y < top || node.y > bottom) return;
 
         const isSelected = node.id === selectedNodeId;
         const isHovered = hoveredNode?.id === node.id;

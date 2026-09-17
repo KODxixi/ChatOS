@@ -10,12 +10,12 @@ ChatOS 将微信只读原始数据变成可检索的本地第二大脑。贡献�
 - 正式网关：`apps/gateway`，FastAPI，8912 保留全部 API；网页入口按本地配置跳转正式 UI。
 - 统一启动：`scripts/start_chatos.bat` → Node 标准库 `scripts/start_chatos.mjs`。无需 PowerShell 执行策略修改。
 - 唯一运行配置：`apps/gateway/config/settings.json`；模板同目录 `settings.example.json`。`libraryDb` 同时供 UI 只读适配与网关使用，`frontendUrl` 指向正式 UI。
-- 历史原型：`artifacts/chatos-ui-aistudio` 已退役，只作来源证据；旧正式前端可从 `var/backups/canonical-entry-20260917/` 恢复。
+- 历史原型及旧前端展开目录已清理，3000 旧实例已停；不重新创建第二套 UI。历史只从 Git 或 `var/backups/canonical-entry-20260917/` 的既有 zip/bundle 回溯。
 - 默认门控：`node scripts/verify-entry.mjs` 检查源码、构建、配置；`--live` 额外核验两项服务的启动身份、跳转与线上 HTML/assets。
 
 ## 实际接入范围
 
-会话列表与消息来自真实 SQLite 只读适配；摘要、关系和排序含原型启发式。待办、项目、资料库、图谱、协作及当前用户身份含演示数据/内存状态，尚未接入网关完整业务。界面已标注范围；不能以正式入口就绪宣称所有功能生产可用。Thinking Mode 仅请求本地 LM Studio，配置存在不等于模型已加载。
+会话列表与消息来自真实 SQLite 只读适配；摘要、关系和排序含原型启发式。待办读取/状态保存与增量整理通过 `/api/gateway/*` 接入网关；项目、资料库、图谱和协作仍含演示数据/内存状态，身份未绑定时明确显示未绑定。不能以正式入口就绪宣称所有功能生产可用。Thinking Mode 仅请求本地 LM Studio，配置存在不等于模型已加载。
 
 ## 目录与分工
 

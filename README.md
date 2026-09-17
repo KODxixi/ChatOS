@@ -2,7 +2,7 @@
 
 微信会话第二大脑。本地正式 UI 为 [127.0.0.1:3108](http://127.0.0.1:3108/)，Python 网关保留 8912 API，其网页入口跳转同一 UI。
 
-目前会话与消息使用真实 SQLite 只读适配；待办、项目、资料、图谱、协作及用户身份仍含演示数据和内存状态。正式源码集成不代表这些业务已接入网关。界面保留 e9d78e9 原型视觉与交互，演示范围已标注。
+会话与消息使用真实 SQLite 只读适配；待办读取/状态保存、增量整理已接入网关。项目、资料、图谱和协作仍含演示数据/内存状态，不能视作生产持久化功能。界面保留 e9d78e9 原型视觉与交互，身份未绑定时明确显示未绑定。
 
 ## 启动
 
@@ -27,7 +27,7 @@ node scripts/verify-entry.mjs --live
 | 正式 UI / Express 适配 | `apps/chatos-console`，UI3108 |
 | Python API | `apps/gateway`，8912 |
 | 开发 UI | `npm run dev`，默认3109；不通过正式运行门控 |
-| 退役原型 | `artifacts/chatos-ui-aistudio`，不再维护/启动；3000 仅历史预览 |
+| 历史版本 | 退役原型、旧前端展开目录已清理；3000 已停，仅保留 Git/压缩归档 |
 | 构建 | `apps/chatos-console/dist`，同时生成服务端与内容身份 |
 | 数据 | `libraryDb` 配置；当前 `D:\ChatOS-Vault\library\wechat-ai.sqlite`；原始表只读 |
 | 日志 / 备份 | `var/logs` / `var/backups`，不入 Git |

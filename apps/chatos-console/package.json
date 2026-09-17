@@ -8,7 +8,7 @@
     "build": "npm run typecheck && node scripts/build.mjs",
     "start": "node ../../scripts/verify-entry.mjs && node dist/server.cjs --production",
     "typecheck": "tsc --noEmit",
-    "test": "node --test ../../tests/canonical-entry.test.mjs scripts/message-loading.test.mjs scripts/gateway-proxy.test.mjs && node scripts/verify-ui-baseline.mjs && npm run verify:features",
+    "test": "node --experimental-strip-types --test ../../tests/canonical-entry.test.mjs scripts/message-loading.test.mjs scripts/gateway-proxy.test.mjs scripts/collaboration.test.mjs scripts/organize-polling.test.mjs scripts/render-budget.test.mjs scripts/conversation-snapshot.test.mjs && node --experimental-strip-types scripts/verify-round3-todos.ts && node scripts/verify-ui-baseline.mjs && npm run verify:features",
     "verify:production": "node scripts/verify-production.mjs",
     "verify:features": "node --experimental-strip-types scripts/verify-conversation-features.ts",
     "preview": "vite preview",

@@ -15,7 +15,7 @@ export const CURRENT_USER: User = {
   id: 'user-joyboy',
   name: 'JoyBoy',
   role: '全栈负责人 & 产品架构师',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+  avatar: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#242426"/><text x="48" y="60" text-anchor="middle" font-family="sans-serif" font-size="38" fill="#f5f5f7">J</text></svg>')}`,
   isSelf: true,
 };
 

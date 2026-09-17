@@ -286,6 +286,7 @@ export const TodosView: React.FC = () => {
                       <div
                         key={todo.id}
                         id={`todo-item-${todo.id}`}
+                        style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 240px' }}
                         draggable
                         onDragStart={e => handleDragStart(e, todo.id)}
                         onClick={() => {

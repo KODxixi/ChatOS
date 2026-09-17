@@ -12,7 +12,7 @@ import {
   AVAILABLE_TEAM_MEMBERS,
   CURRENT_USER,
 } from './src/mockData';
-import { SharedTodoList, SharedTask, ProjectComment, User } from './src/types';
+import { SharedTodoList, SharedTask, ProjectComment, User, mapGatewayStatus } from './src/types';
 
 dotenv.config();
 
@@ -158,16 +158,16 @@ const readConversationSnapshot = () => {
     const topTodos = new Map(
       (database.prepare(`
         WITH ranked AS (
-          SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority,
+          SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority, status,
                  source_message_id,
                  ROW_NUMBER() OVER (
                    PARTITION BY conversation_id
                    ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, sent_at DESC
                  ) AS rank
           FROM tasks
-          WHERE status = 'todo'
+          WHERE status IN ('todo', 'pending', 'in_progress')
         )
-        SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority, source_message_id
+        SELECT task_id, conversation_id, content, sender_name, sent_at, due_date, priority, status, source_message_id
         FROM ranked
         WHERE rank = 1
       `).all() as Record<string, unknown>[])
@@ -253,7 +253,7 @@ const readConversationSnapshot = () => {
         topActionTodo: todo ? {
           id: String(todo.task_id),
           title: String(todo.content),
-          status: 'pending',
+          status: mapGatewayStatus(String(todo.status)).status,
           assigneeRole: 'other',
           dueDate: String(todo.due_date || '待确认'),
           isUrgent: todo.priority === 'high',

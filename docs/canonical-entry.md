@@ -1,6 +1,6 @@
 # 正式入口、开发与恢复
 
-正式源码是根仓库的 `apps/chatos-console` 和 `apps/gateway`。前者来自原型 e9d78e9，后者保留 9729711 的六项后端修复。`artifacts/chatos-ui-aistudio` 已退役，3000 仅历史预览记录。
+正式源码只有根仓库的 `apps/chatos-console` 和 `apps/gateway`。前者来自原型 e9d78e9；原型展开目录 `artifacts/chatos-ui-aistudio` 和旧前端展开目录已清理，3000 旧实例已停。历史来源通过 Git 或既有 zip/bundle 回溯，不再保留第二套可运行 UI。
 
 ## 构建与启动
 
@@ -21,7 +21,7 @@ node scripts/verify-entry.mjs --live
 
 源码摘要覆盖 UI、静态资源、包锁与构建/门控/启动脚本。`dist/build.json` 记录内容身份、原型来源 commit、构建时主仓库 `repositoryCommit`、源码 `sourceDirty` 与输出摘要。Git 基线和 dirty 状态不参与内容 buildId；仅文档等无关提交不会使构建失效。服务器内嵌身份，启动时固定代码摘要，重建不会让旧进程自动变成新版本。网关同样固定启动源码摘要。变更后先重建，再核实旧进程归属并重启；启动器拒绝未知/旧实例，绝不自行杀进程。
 
-开发用 `npm run dev`（3109）；`npm run preview` 只有静态 UI。它们不能通过正式运行门控。Express 只读适配与网关尚未全量桥接：会话/消息真实，其他模块与协作仍为演示/内存状态。UI 上的增量整理不代表网关完整流程已接入。
+开发用 `npm run dev`（3109）；`npm run preview` 只有静态 UI。它们不能通过正式运行门控。Express 只读适配与网关尚未全量桥接：会话/消息真实；待办读取/状态保存、增量整理通过 `/api/gateway/*` 接入。项目、资料、图谱和协作仍含演示/内存状态；协作 API 明确返回 `X-ChatOS-Mode: in-memory-demo`，重启不保留。
 
 ## 数据、配置与日志
 
@@ -34,6 +34,6 @@ node scripts/verify-entry.mjs --live
 
 门控报 occupied/stale 时，先读取监听 PID、可执行文件、命令、创建时间和 `/api/runtime`；旧版可结合原始启动日志、cwd 证据和线上 assets 与本地构建逐字节核对。只有证实属于 ChatOS 且获得本任务范围授权的实例才可停。无证据则保留并报告，禁止按端口批量 kill。
 
-迁移前备份在 `var/backups/canonical-entry-20260917/`：`former-console-9729711.zip`、`chatos-9729711.bundle`、`prototype-e9d78e9.zip`、`prototype-e9d78e9.bundle`，以及 `former-console-working-tree/` 原目录。两个 bundle 含完整可恢复历史。恢复时先另存当前成果，从 archive 取出精确组件源码，并配套恢复该基线的网关 frontend 配置/入口；不要用 Git hard reset 或恢复旧数据库来回滚 UI。
+迁移前归档在 `var/backups/canonical-entry-20260917/`：`former-console-9729711.zip`、`chatos-9729711.bundle`、`prototype-e9d78e9.zip`、`prototype-e9d78e9.bundle`。两个 bundle 保留历史；`former-console-working-tree/` 展开副本已删除。归档不是维护/启动入口；需要回溯时精确提取组件并配套核对配置，不用 Git hard reset 或恢复旧数据库来回滚 UI。
 
 浏览器视觉验收由控制器进行；本任务仅报告实际执行的 HTTP/资源/契约结果，浏览器工具不可用时标记受阻。

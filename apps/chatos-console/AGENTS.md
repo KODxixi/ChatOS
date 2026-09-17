@@ -4,7 +4,7 @@
 
 - `src/context/ChatOSContext.tsx` 管理状态；`src/components/` 是现役组件，`src/core/` 为过滤/排序逻辑。
 - `server.ts` 是同源 Express 适配：真实会话/消息只读 SQLite，其余协作 API 在内存里。不要把演示数据声明为已落库，也不要将整个适配迁到 Python。
-- `src/mockData.ts` 仍用于待办、项目、资料、图谱与身份演示。新 UI 文案要明确真实/演示边界。
+- `src/mockData.ts` 仍用于项目、资料、图谱、协作等演示及初始占位。真实待办与增量整理走 `/api/gateway/*`；新 UI 文案明确真实/演示边界。
 - `src/vendor/gary/` 为 vendored 资源；复用 token，不修改母源。新增交互保留键盘、焦点与 reduced-motion 支持。
 
 Node >=22.13。`npm ci` 安装已有锁定依赖；`npm run typecheck`；`npm test`；`npm run build` 同时构建 UI、server.cjs 和 build.json。内容摘要包含源码/配置/构建脚本及锁文件，时间不参与身份。

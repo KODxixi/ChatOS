@@ -234,6 +234,8 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     INITIAL_PROJECT_COMMENTS
   );
   const [activeDiscussingProjectId, setActiveDiscussingProjectId] = useState<string | null>(null);
+  // Serialize repeated clicks on the same mutable field, not unrelated items.
+  const pendingCollaborativeActionsRef = useRef(new Set<string>());
 
   // Mindmap & Bi-directional Links State
   const [customBiLinks, setCustomBiLinks] = useState<MindMapBiLink[]>([]);
@@ -910,9 +912,17 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toggleCompleteSharedTask = useCallback(
     async (listId: string, taskId: string, completedByUserId?: string) => {
+      const previous = sharedLists.find(l => l.id === listId)?.tasks.find(t => t.id === taskId);
+      if (!previous) return false;
+      const key = JSON.stringify(['task', listId, taskId]);
+      if (pendingCollaborativeActionsRef.current.has(key)) {
+        showToast('该任务正在同步，请稍候');
+        return previous.isCompleted;
+      }
+      pendingCollaborativeActionsRef.current.add(key);
       const targetUser = teamMembers.find(m => m.id === completedByUserId) || CURRENT_USER;
-      let nextState = false;
-      let taskTitle = '';
+      const nextState = !previous.isCompleted;
+      const taskTitle = previous.title;
 
       setSharedLists(prev =>
         prev.map(list => {
@@ -921,8 +931,6 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               ...list,
               tasks: list.tasks.map(t => {
                 if (t.id === taskId) {
-                  nextState = !t.isCompleted;
-                  taskTitle = t.title;
                   return {
                     ...t,
                     isCompleted: nextState,
@@ -963,6 +971,15 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }),
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
+        const saved = await res.json() as SharedTask;
+        if (typeof saved.isCompleted !== 'boolean') throw new Error('Invalid shared task response');
+        setSharedLists(prev => prev.map(list => list.id !== listId ? list : {
+          ...list,
+          tasks: list.tasks.map(t => t.id !== taskId ? t : {
+            ...t, isCompleted: saved.isCompleted,
+            completedAt: saved.completedAt, completedBy: saved.completedBy,
+          }),
+        }));
       } catch (e) {
         setSharedLists(prev => prev.map(list => {
           if (list.id === listId) {
@@ -970,7 +987,8 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               ...list,
               tasks: list.tasks.map(t =>
                 t.id === taskId
-                  ? { ...t, isCompleted: !nextState, completedAt: undefined, completedBy: undefined }
+                  ? { ...t, isCompleted: previous.isCompleted,
+                      completedAt: previous.completedAt, completedBy: previous.completedBy }
                   : t
               ),
             };
@@ -978,12 +996,14 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return list;
         }));
         showToast('协作任务状态更新失败，已回滚');
-        return !nextState;
+        return previous.isCompleted;
+      } finally {
+        pendingCollaborativeActionsRef.current.delete(key);
       }
 
       return nextState;
     },
-    [teamMembers, showToast]
+    [sharedLists, teamMembers, showToast]
   );
 
   const deleteSharedTask = useCallback(
@@ -1112,7 +1132,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // reaction/delete calls address the right entity.
         setProjectComments(prev => ({
           ...prev,
-          [projectId]: (prev[projectId] || []).map(c => c.id === newComment.id ? { ...c, id: savedComment.id } : c),
+          [projectId]: (prev[projectId] || []).map(c => c.id === newComment.id ? savedComment : c),
         }));
         return savedComment;
       } catch (e) {
@@ -1180,6 +1200,15 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const toggleCommentReaction = useCallback(
     async (projectId: string, commentId: string, emoji: string, asUserId?: string) => {
       const uId = asUserId || CURRENT_USER.id;
+      const comment = (projectComments[projectId] || []).find(c => c.id === commentId);
+      if (!comment) return;
+      const key = JSON.stringify(['reaction', projectId, commentId, emoji]);
+      if (pendingCollaborativeActionsRef.current.has(key)) {
+        showToast('该表情正在同步，请稍候');
+        return;
+      }
+      pendingCollaborativeActionsRef.current.add(key);
+      const previous = comment.reactions?.find(r => r.emoji === emoji);
       setProjectComments(prev => {
         const comments = prev[projectId] || [];
         const updated = comments.map(c => {
@@ -1208,8 +1237,6 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return { ...prev, [projectId]: updated };
       });
 
-      // Snapshot reactions for rollback.
-      const snapshot = (projectComments[projectId] || []).find(c => c.id === commentId)?.reactions;
       try {
         const res = await fetch(`/api/collaborative/projects/${projectId}/comments/${commentId}/reactions`, {
           method: 'POST',
@@ -1218,18 +1245,22 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
       } catch (e) {
-        if (snapshot) {
-          setProjectComments(prev => ({
-            ...prev,
-            [projectId]: (prev[projectId] || []).map(c =>
-              c.id === commentId ? { ...c, reactions: snapshot } : c
-            ),
-          }));
-        }
+        setProjectComments(prev => ({
+          ...prev,
+          [projectId]: (prev[projectId] || []).map(c => {
+            if (c.id !== commentId) return c;
+            // Only undo this emoji. A different emoji may already have saved.
+            const reactions = (c.reactions || []).filter(r => r.emoji !== emoji);
+            if (previous) reactions.push(previous);
+            return { ...c, reactions };
+          }),
+        }));
         showToast('表情反应同步失败，已回滚');
+      } finally {
+        pendingCollaborativeActionsRef.current.delete(key);
       }
     },
-    [projectComments]
+    [projectComments, showToast]
   );
 
   const toggleFollowConversation = useCallback((id: string) => {
