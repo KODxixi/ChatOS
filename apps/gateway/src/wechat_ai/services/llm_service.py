@@ -78,8 +78,10 @@ def put_cached(
         pass
 
 
-def is_available() -> bool:
+def is_available(*, local_only: bool = False) -> bool:
     # local LM Studio needs no key; fallback needs APIYI key
+    if local_only:
+        return _use_local_llm
     return bool(_use_local_llm or LLM_KEY)
 
 
@@ -103,8 +105,14 @@ def complete(
     *,
     temperature: float = 0.2,
     max_tokens: int = 400,
+    local_only: bool = False,
 ) -> str:
-    """Non-streaming chat completion. Raises OpenAICompatibleUnavailable on failure."""
+    """Non-streaming chat completion. Raises OpenAICompatibleUnavailable on failure.
+
+    When *local_only* is True, only the local LM Studio endpoint is tried;
+    the external APIYI fallback is disabled (used by organize pipeline to
+    prevent chat content from being sent externally).
+    """
     payload = {
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -119,7 +127,7 @@ def complete(
     tries = []
     if _use_local_llm:
         tries.append((LOCAL_BASE, LOCAL_MODEL, None, "local"))
-    if LLM_KEY:
+    if LLM_KEY and not local_only:
         tries.append((FALLBACK_BASE, FALLBACK_MODEL, LLM_KEY, "apiyi"))
     for base, model, key, tag in tries:
         try:
@@ -130,14 +138,9 @@ def complete(
             last = exc
             if tag == "local":
                 _use_local_llm = False
-                logger.warning("local LLM unreachable, falling back to APIYI: %s", exc)
-    logger.warning("LLM call failed: %s", last)
+                logger.warning("local LLM unreachable: %s", exc)
+    logger.warning("LLM call failed (local_only=%s): %s", local_only, last)
     raise OpenAICompatibleUnavailable("LLM call failed") from last
-    try:
-        return data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        logger.warning("LLM response malformed: %s", exc)
-        raise OpenAICompatibleUnavailable("LLM response malformed") from exc
 
 
 def summarize(messages_text: str) -> str | None:
@@ -158,12 +161,19 @@ def summarize(messages_text: str) -> str | None:
     return out or None
 
 
-def filter_todos(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filter_todos(
+    items: list[dict[str, Any]],
+    *,
+    local_only: bool = True,
+) -> list[dict[str, Any]]:
     """LLM secondary filter. items: [{"index","text"}]. Returns kept items with cleaned text.
 
-    Raises OpenAICompatibleUnavailable when the model is unreachable so the
-    caller can mark degradation.  JSON parse failures and empty keep results
-    return the original items (valid responses, not failures).
+    Raises OpenAICompatibleUnavailable when:
+    - the model is unreachable
+    - the response is not parseable as JSON (invalid format → degrade, don't cache)
+
+    Returns an empty list when the model legitimately filters everything out
+    (valid empty result).  Returns filtered items with cleaned text otherwise.
     """
     if not items:
         return items
@@ -174,18 +184,17 @@ def filter_todos(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "只输出JSON数组，不要解释。"
     )
     lines = "\n".join(f"{i}. {it['text']}" for i, it in enumerate(items))
-    # Let OpenAICompatibleUnavailable propagate so caller marks degraded.
-    raw = complete(system, lines, max_tokens=800, temperature=0.1)
-    # extract JSON array
+    raw = complete(system, lines, max_tokens=800, temperature=0.1, local_only=local_only)
     raw = raw.strip()
     start = raw.find("[")
     end = raw.rfind("]")
     if start < 0 or end <= start:
-        return items
+        # Invalid format — no JSON array at all.
+        raise OpenAICompatibleUnavailable("filter_todos: no JSON array in response")
     try:
         arr = json.loads(raw[start : end + 1])
-    except json.JSONDecodeError:
-        return items
+    except json.JSONDecodeError as exc:
+        raise OpenAICompatibleUnavailable(f"filter_todos: JSON parse error: {exc}") from exc
     keep: dict[int, str] = {}
     for row in arr:
         try:
@@ -196,6 +205,5 @@ def filter_todos(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     keep[idx] = cleaned
         except (KeyError, ValueError, TypeError):
             continue
-    if not keep:
-        return items  # don't over-filter on bad output
+    # Valid response: either some kept or everything filtered out.
     return [dict(items[i], text=keep[i]) for i in sorted(keep)]

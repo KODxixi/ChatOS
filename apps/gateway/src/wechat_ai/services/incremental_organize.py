@@ -179,7 +179,7 @@ def _stage_tasks(
     source_message_id) are skipped.  Protected statuses are counted but
     never touched.
 
-    Returns the set of conversation_ids that had new tasks added.
+    Returns the set of conversation_ids that had new messages scanned.
     """
     from . import message_cleaning as mc
     from ..api.tasks import (
@@ -261,6 +261,9 @@ def _stage_tasks(
         stats.conversationsScanned += 1
         stats.messagesScanned += len(msg_rows)
 
+        # Track this conversation as affected (has new messages, even if no todo extracted).
+        affected_conversations.add(conv_id)
+
         # Extract todos from these messages.
         now_ms = int(time.time() * 1000)
         new_tasks: list[dict[str, Any]] = []
@@ -295,7 +298,6 @@ def _stage_tasks(
             new_tasks = _llm_filter_todos(connection, new_tasks, stats)
 
         # Idempotent insert: skip existing by task_id or source_message_id.
-        conv_had_new = False
         for todo in new_tasks:
             existing = connection.execute(
                 "SELECT task_id, status FROM tasks WHERE task_id = ? OR (conversation_id = ? AND source_message_id = ?)",
@@ -324,10 +326,6 @@ def _stage_tasks(
                 ),
             )
             stats.newTasks += 1
-            conv_had_new = True
-
-        if conv_had_new:
-            affected_conversations.add(conv_id)
 
         # Advance watermark to the latest message we scanned (max sent_at, then max id).
         latest = max(msg_rows, key=lambda r: (int(r["sent_at"]), int(r["id"])))
@@ -355,7 +353,7 @@ def _llm_filter_todos(
         stats.llmDegraded = True
         return candidates
 
-    if not llm.is_available():
+    if not llm.is_available(local_only=True):
         stats.llmDegraded = True
         return candidates
 
@@ -385,9 +383,10 @@ def _llm_filter_todos(
                     pass  # cache corrupt, fall through to live call
 
             try:
-                res = llm.filter_todos(items)
+                res = llm.filter_todos(items, local_only=True)
+                # res is a list (possibly empty = valid "none are todos" result).
                 keep_idx = {r["index"]: r["text"] for r in res}
-                # Store in cache.
+                # Cache the result (including empty results).
                 llm.put_cached(
                     connection, "filter_todos", cache_ref, cache_content,
                     json.dumps({str(k): v for k, v in keep_idx.items()}, ensure_ascii=False),
@@ -415,9 +414,10 @@ def _stage_projects(
     vault_root: Path,
     affected_conversations: set[str],
 ) -> None:
-    """Re-extract projects only for affected conversations.
+    """Re-extract projects for affected conversations.
 
-    If no conversations had new tasks, projectsUpdated stays 0.
+    If no conversations had new messages, projectsUpdated stays 0.
+    Raises on extraction/write failure so the caller can report degraded.
     """
     from .project_extractor import extract_projects
 
@@ -426,17 +426,15 @@ def _stage_projects(
         logger.info("organize.projects: no affected conversations, skipping")
         return
 
-    try:
-        projects = extract_projects(
-            connection, vault_root=vault_root, min_messages=10,
-            conversation_ids=tuple(sorted(affected_conversations)),
-        )
-        stats.projectsUpdated = len(projects)
-        logger.info("organize.projects: updated=%d (affected=%d)", stats.projectsUpdated, len(affected_conversations))
-    except Exception as exc:
-        logger.warning("organize.projects failed: %s", exc)
-        # Project extraction failure is NOT an LLM degradation.
-        stats.projectsUpdated = 0
+    projects = extract_projects(
+        connection, vault_root=vault_root, min_messages=10,
+        conversation_ids=tuple(sorted(affected_conversations)),
+    )
+    stats.projectsUpdated = len(projects)
+    logger.info(
+        "organize.projects: updated=%d (affected=%d)",
+        stats.projectsUpdated, len(affected_conversations),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +477,13 @@ def run_incremental_organize(
             # Stage 4: projects (only affected conversations)
             connection.commit()
             jobs_service.transition(job_id, status="running", stage="projects", progress_current=4, progress_total=total_stages)
-            _stage_projects(connection, stats, vault_root, affected)
+            project_error: str | None = None
+            try:
+                _stage_projects(connection, stats, vault_root, affected)
+            except Exception as exc:
+                logger.warning("organize.projects failed: %s", exc)
+                project_error = str(exc)
+                stats.llmDegraded = True  # mark degraded so we don't return completed
 
             # Stage 5: finish — persist result
             connection.commit()
@@ -494,6 +498,8 @@ def run_incremental_organize(
             stats.protectedTasksPreserved, stats.watermarksAdvanced, stats.llmDegraded,
         )
 
+        if project_error:
+            return JobResult(status="degraded", error_code="PROJECT_WRITE_FAILED")
         if stats.llmDegraded:
             return JobResult(status="degraded", error_code="LLM_UNAVAILABLE")
         return JobResult(status="completed")

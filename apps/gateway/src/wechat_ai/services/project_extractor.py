@@ -81,15 +81,17 @@ def extract_projects(
     Returns a list of ProjectInfo objects and writes project-brief.md files
     to vault_root/conversations/project/{project_id}/.
 
-    When *conversation_ids* is provided, only those conversations are
-    considered (incremental mode).
+    When *conversation_ids* is provided, those conversations are used to
+    identify which projects are affected, but the brief for each affected
+    project includes ALL conversations belonging to that project (not just
+    the changed ones).  This prevents partial overwrites.
     """
     now_ms = int(time.time() * 1000)
 
-    # Get project-domain conversations (COALESCE overrides with base table).
     if conversation_ids:
+        # Step 1: identify which project names the changed conversations belong to.
         placeholders = ", ".join("?" for _ in conversation_ids)
-        convs = connection.execute(
+        changed = connection.execute(
             f"""
             SELECT c.id, c.title, c.message_count
             FROM conversations c
@@ -97,11 +99,29 @@ def extract_projects(
             WHERE c.id IN ({placeholders})
               AND COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) = 1
               AND COALESCE(o.domain, c.domain) = 'project'
+            """,
+            conversation_ids,
+        ).fetchall()
+        affected_names = {normalize_project_name(r["title"] or r["id"]) for r in changed}
+        if not affected_names:
+            logger.info("project extraction: no affected project conversations")
+            return []
+        # Step 2: select ALL conversations for those project names (complete project).
+        name_placeholders = ", ".join("?" for _ in affected_names)
+        convs = connection.execute(
+            f"""
+            SELECT c.id, c.title, c.message_count
+            FROM conversations c
+            LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+            WHERE COALESCE(o.domain, c.domain) = 'project'
+              AND COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) = 1
               AND c.message_count >= ?
             ORDER BY c.message_count DESC
             """,
-            (*conversation_ids, min_messages),
+            (min_messages,),
         ).fetchall()
+        # Filter to only affected projects by name match.
+        convs = [c for c in convs if normalize_project_name(c["title"] or c["id"]) in affected_names]
     else:
         convs = connection.execute(
             """

@@ -24,11 +24,11 @@ _CONVERSATION_COLUMNS = """
     conversations.is_favorite AS is_favorite,
     conversations.is_archived AS is_archived,
     conversations.note AS note,
-    conversations.is_indexing_enabled AS is_indexing_enabled,
-    conversations.domain AS domain,
-    conversations.project_id AS project_id,
-    conversations.project_role AS project_role,
-    conversations.classification_status AS classification_status,
+    COALESCE(o.is_indexing_enabled, conversations.is_indexing_enabled, 1) AS is_indexing_enabled,
+    COALESCE(o.domain, conversations.domain) AS domain,
+    COALESCE(o.project_id, conversations.project_id) AS project_id,
+    COALESCE(o.project_role, conversations.project_role) AS project_role,
+    COALESCE(o.classification_status, conversations.classification_status, 'needs_review') AS classification_status,
     COALESCE(source_accounts.source_app_id, 'wechat') AS source_app_id,
     COALESCE(
         conversation_origins.source_account_id,
@@ -41,6 +41,8 @@ _CONVERSATION_FROM = """
       ON conversation_origins.conversation_id = conversations.id
     LEFT JOIN source_accounts
       ON source_accounts.id = conversation_origins.source_account_id
+    LEFT JOIN conversation_overrides o
+      ON o.conversation_id = conversations.id
 """
 
 
