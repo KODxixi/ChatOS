@@ -26,7 +26,8 @@ def create_setup_router(service: SetupService) -> APIRouter:
             return _error(422, exc.code, str(exc))
         except SetupError as exc:
             return _error(500, exc.code, "首次设置失败。")
-        except Exception:
+        except Exception as _e:
+            import logging; logging.getLogger(__name__).warning("setup probe failed: %s", _e)
             return _error(500, "SETUP_ERROR", "首次设置失败。")
 
     return router

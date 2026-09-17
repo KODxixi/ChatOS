@@ -90,4 +90,21 @@ def create_knowledge_router(
                 message="Invalid knowledge query.",
             )
 
+    @router.post("/knowledge/archive")
+    def archive_knowledge() -> dict[str, Any]:
+        """Trigger file + link archival into the local library tree."""
+        from ..services.knowledge_archiver import archive_library
+        library_root = asset_root.parent if asset_root is not None else None
+        if library_root is None:
+            return api_error_response(
+                status_code=500, code="NO_ASSET_ROOT",
+                message="asset_root not configured.",
+            )
+        stats = archive_library(
+            connection_factory,
+            library_root=library_root,
+            asset_root=asset_root,
+        )
+        return {"ok": True, "stats": stats}
+
     return router

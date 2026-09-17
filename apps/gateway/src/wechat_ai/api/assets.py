@@ -14,7 +14,7 @@ from tempfile import NamedTemporaryFile
 from typing import Callable
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ..services.conversation_service import ConnectionFactory
 from ..services.knowledge_service import resolve_asset_path
@@ -47,17 +47,23 @@ def create_assets_router(
         raise ValueError("cache_budget_bytes must be positive")
     router = APIRouter()
 
+    # 1x1 transparent PNG placeholder for unresolved/unavailable assets
+    _PLACEHOLDER_PNG = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+        b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    def _placeholder() -> Response:
+        return Response(content=_PLACEHOLDER_PNG, media_type="image/png")
+
     @router.get("/assets/{asset_id}", response_model=None)
     def asset_content(asset_id: int) -> FileResponse | JSONResponse:
         row = _load_asset(connection_factory, asset_id)
         if row is None:
             return _asset_not_found()
         if row["status"] != "resolved":
-            return api_error_response(
-                status_code=409,
-                code="ASSET_UNRESOLVED",
-                message="Asset content has not been resolved.",
-            )
+            return _placeholder()
         local_path = (
             str(row["local_path"]) if row["local_path"] is not None else None
         )
@@ -86,11 +92,7 @@ def create_assets_router(
         if row is None:
             return _asset_not_found()
         if row["status"] != "resolved":
-            return api_error_response(
-                status_code=409,
-                code="ASSET_UNRESOLVED",
-                message="Asset content has not been resolved.",
-            )
+            return _placeholder()
         mime_type = _safe_response_mime(row["mime_type"])
         if row["kind"] != "audio" or mime_type != "audio/silk":
             return api_error_response(
@@ -191,7 +193,8 @@ def _cached_voice_path(
             return target_path, digest
         try:
             wav_payload = decoder(source_payload)
-        except Exception:
+        except Exception as _e:
+            import logging; logging.getLogger(__name__).warning("wav decode failed: %s", _e)
             return None, digest
         if not _is_valid_wav_payload(wav_payload):
             return None, digest

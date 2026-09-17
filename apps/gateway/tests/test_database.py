@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib
 import sqlite3
@@ -66,7 +66,7 @@ class DatabaseTests(unittest.TestCase):
                     connection.execute(
                         "SELECT value FROM app_meta WHERE key = 'schema_version'"
                     ).fetchone()[0],
-                        "13",
+                        "18",
                 )
 
     def test_initialize_database_is_idempotent_and_preserves_local_data(self) -> None:
@@ -172,7 +172,7 @@ class DatabaseTests(unittest.TestCase):
                     upgraded.execute(
                         "SELECT value FROM app_meta WHERE key = 'schema_version'"
                     ).fetchone()[0],
-                    "13",
+                    "18",
                 )
                 self.assertEqual(
                     tuple(

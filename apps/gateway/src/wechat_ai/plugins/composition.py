@@ -61,6 +61,8 @@ DEFAULT_COMPOSITION: dict[str, Any] = {
         {"id": "answer", "inject": ["core"]},
         # read-only data APIs (conversations/search/sources/knowledge/...)
         {"id": "query", "inject": ["core"]},
+        # incremental organize pipeline (activity/classify/tasks/projects)
+        {"id": "organize", "inject": ["core", "jobs"]},
         # conversation export
         {"id": "export", "inject": ["core"]},
         # runtime contract (/api/runtime)

@@ -1,77 +1,73 @@
 # ChatOS
 
-会话聊天与项目管理操作系统。与 [ArchOS](https://github.com/KODxixi/garchos) 并列，
-基于 [Gary-UI](https://github.com/KODxixi/Gary-UI) Liquid Glass Design System。
+微信会话的第二大脑：从微信对话中自动提取摘要、待办和项目，在本地构建一个可检索、可图谱化的个人知识库。
 
-## 定位
+ChatOS 不修改你的微信原始数据——它把解密后的只读 SQLite 作为索引层，在旁边新建派生表
+（tasks / llm_cache / projects / graph），再用 LLM 给会话加一层智能。前端是 Gary-UI Liquid Glass 风格的
+本地控制台，后端是 FastAPI 网关，全部跑在 `http://127.0.0.1:8912/`，数据不出本机。
 
-- **会话审计**：微信聊天内容目录化入库、系统性分类、可检索可追溯
-- **项目管理**：从项目相关群聊中自动提取设计决策、时间节点、甲方意见
-- **跨 OS 联动**：项目信息通过 `bridges/archos/` 自动同步到 ArchOS 建筑设计系统
+## 功能特性
 
-## 快速开始
+- **会话摘要**：规则式打分即时出摘要，LLM 在后台异步增强；结果缓存进 `llm_cache`，不阻塞界面。
+- **待办提取**：自动从消息里抽出 todo（规则初筛 + LLM 过滤），支持按状态/优先级过滤与勾选。
+- **项目识别**：从 project 类会话聚类出项目，统计决策、里程碑、甲方反馈。
+- **知识图谱**：会话/实体/决策的 nodes-edges 图谱，带证据回溯。
+- **审计面板**：媒体、链接、任务覆盖率与健康度统计。
+- **全文搜索**：跨会话检索消息内容。
+- **媒体预览**：图片/文件/语音分页，本地附件经 `/api/assets/{id}` 直出。
+- **链接归档**：会话内链接一键归档到知识库。
+- **自动归档**：30 天零发言会话自动标记 inactive，不进索引。
 
-前置：Python ≥3.13、Node ≥20（仅构建前端需要）、本地模型栈（检索走 llama-swap `127.0.0.1:9123`，对话/识图可选 LM Studio `127.0.0.1:1234`）。
+## 快速启动（3 步）
 
-### 1. 后端依赖
-
-```powershell
-cd apps\gateway
-uv sync            # 或 python -m venv .venv; .venv\Scripts\pip install -e .
-```
-
-### 2. 运行时配置（本地文件，不入库）
-
-`apps/gateway/config/settings.json`：
-
-| 键 | 作用 |
-|---|---|
-| `libraryDb` | 会话库 SQLite 路径（默认 `data/library/wechat-ai.sqlite`） |
-| `webDist` | 前端 dist 目录（默认 `web/dist`；本机部署指向 `../chatos-console/dist`） |
-| `rerankEnabled` | 检索是否走精排模型 |
-| `activityFilterEnabled` / `activityFilterInactiveDays` | 活跃度过滤 |
-
-另有 `apps/gateway/config.json`（本地文件，不入库）：`{"db_dir": "<微信 PC db_storage 路径>"}` —— 媒体提取的源根，缺了媒体功能会退化。
-
-### 3. 构建前端
+前置：Python ≥3.13、Node ≥20。
 
 ```powershell
-cd apps\chatos-console
-npm install
-npm run build      # 产出 dist/，由后端在 / 上托管；前端源码改动后必须重跑
-```
+# 1. 安装后端依赖
+cd C:\ChatOS\apps\gateway
+uv sync
 
-### 4. 启动
+# 2. 构建前端（产出 dist/，由后端托管）
+cd C:\ChatOS\apps\chatos-console
+npm install; npm run build
 
-```powershell
-# Windows 一键（8912 已在监听时自动跳过，防重复启动）
-scripts\start_chatos.bat
-
-# 或直接
-cd apps\gateway
+# 3. 启动
+cd C:\ChatOS\apps\gateway
 .venv\Scripts\chatbox.exe serve --port 8912 --no-browser
 ```
 
-访问 http://127.0.0.1:8912/ —— 控制台 UI 与 API 同源（`/api/*`），
-**不需要**单独跑 Vite dev server。`serve` 默认会打开浏览器，自动化/自启场景加 `--no-browser`。
+打开 http://127.0.0.1:8912/ 。
+一键脚本见 `scripts\start_chatos.bat`。配置（数据库路径、模型、活跃度阈值）在
+`apps/gateway/config/settings.json`；LLM key 走环境变量，模板见根目录 `.env.example`。
 
-### 5. Windows 自启
+## 技术栈
 
-计划任务 `chatbox-serve`（Boot + Logon 触发，`LogonType=Interactive`）→ `scripts\start_chatos.bat`。
-`InteractiveToken` 的含义是**仅在用户已登录时可启动**。
+| 层 | 技术 |
+|---|---|
+| 前端 | Vite 8 · React 19 · TypeScript 5.9 (strict) · Gary-UI Liquid Glass (CSS 变量) |
+| 后端 | Python ≥3.13 · FastAPI · uvicorn · typer · Cordis 风格 plugin kernel |
+| 数据 | SQLite (WAL)，原始表只读 + 派生表；迁移 `migrations/001-016.sql` |
+| LLM | OpenAI 兼容中继（APIYI）· claude-haiku · `llm_cache` 数据库缓存 · 异步+降级 |
 
-## 架构
+## UI 一览
+
+- **顶栏**：全局搜索框（Ctrl/Cmd+K 聚焦）、审计、知识图谱入口。
+- **两栏会话视图**：左侧会话列表（活跃度过滤），右侧会话详情（摘要 / 媒体 / 链接）。
+- **三个主 tab**：会话、待办、项目。
+- **两个 Overlay**：审计面板、知识图谱，Esc 关闭。
+
+## 项目结构
 
 ```
-ChatOS
-├── apps/
-│   ├── chatos-console/   # 主控制台 UI（gary-ui）
-│   ├── gateway/          # FastAPI 后端网关
-│   └── shell/            # Agent UI Shell
-├── classification/       # 会话分类体系
-├── conversations/        # 会话库指针（本体在 D:\ChatOS-Vault\）
-├── bridges/archos/       # ArchOS 互操作桥
-└── ...
+C:\ChatOS
+├── apps\
+│   ├── chatos-console\   # 前端 SPA（见其内 AGENTS.md）
+│   └── gateway\          # FastAPI 后端（见其内 AGENTS.md）
+├── config\               # 运行配置 settings.json
+├── classification\       # 会话分类体系
+├── bridges\archos\       # ArchOS 互操作契约
+├── scripts\              # 启动/运维脚本
+└── AGENTS.md             # ★agent 贡献指南（架构/数据模型/API/红线）
 ```
 
-详见 [AGENTS.md](AGENTS.md)（agent 治理）和 [classification/taxonomy.md](classification/taxonomy.md)（分类体系）。
+完整架构、数据模型、API 一览与禁忌见 [AGENTS.md](AGENTS.md)。

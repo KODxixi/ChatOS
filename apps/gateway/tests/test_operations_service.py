@@ -69,6 +69,7 @@ def test_background_jobs_are_persistent_sanitized_and_cancellable(
         "finishedAt": None,
         "updatedAt": "2026-08-02T00:00:00Z",
         "cancelRequestedAt": None,
+        "result": {},
     }
     assert listed["items"] == [created]
     assert cancelled["status"] == "cancelled"

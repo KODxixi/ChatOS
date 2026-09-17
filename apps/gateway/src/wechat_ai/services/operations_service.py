@@ -31,6 +31,7 @@ JOB_TYPES = frozenset(
         "media",
         "gchat_insights",
         "backup",
+        "incremental_organize",
     }
 )
 JOB_STATUSES = frozenset(
@@ -436,6 +437,27 @@ class BackgroundJobService:
                     now,
                     job_id,
                 ),
+            )
+            connection.commit()
+            return self._job(connection, job_id)
+
+    def set_result(
+        self,
+        job_id: str,
+        result: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        result_json = json.dumps(
+            dict(result),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        now = self._clock()
+        with self._open() as connection:
+            self._job_row(connection, job_id)  # raises NotFound if missing
+            connection.execute(
+                "UPDATE background_jobs SET result_json = ?, updated_at = ? WHERE id = ?",
+                (result_json, now, job_id),
             )
             connection.commit()
             return self._job(connection, job_id)
@@ -906,6 +928,19 @@ def _safe_first_import_status(
     }
 
 
+def _parse_result_json(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        raw = row["result_json"]
+    except (IndexError, KeyError):
+        return {}
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
 def _job_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -936,6 +971,7 @@ def _job_from_row(row: sqlite3.Row) -> dict[str, Any]:
             if row["cancel_requested_at"] is not None
             else None
         ),
+        "result": _parse_result_json(row),
     }
 
 

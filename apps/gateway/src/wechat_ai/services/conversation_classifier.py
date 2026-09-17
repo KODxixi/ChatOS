@@ -88,7 +88,19 @@ def classify_conversation(
     if kind == "system":
         return "subscription", None, "auto"
 
-    # Service patterns (strong signal, applies to both group and direct)
+    # Direct (1:1) chats are NEVER marked as "project" — project domain is
+    # reserved for group chats / multi-conversation projects. Direct chats
+    # are classified as personal / work / service / subscription only.
+    if kind == "direct":
+        if _SERVICE_RE.search(text):
+            return "service", None, "auto"
+        if _SUBSCRIPTION_RE.search(text):
+            return "subscription", None, "auto"
+        if _WORK_RE.search(text):
+            return "work", None, "auto"
+        return "personal", None, "auto"
+
+    # Service patterns (strong signal, groups only)
     if _SERVICE_RE.search(text):
         return "service", None, "auto"
 
@@ -108,10 +120,6 @@ def classify_conversation(
     # Personal patterns
     if _PERSONAL_RE.search(text):
         return "personal", None, "auto"
-
-    # Direct messages default to personal (but flag for review)
-    if kind == "direct":
-        return "personal", None, "needs_review"
 
     # Groups that don't match anything → needs review
     return "personal", None, "needs_review"

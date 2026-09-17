@@ -17,7 +17,8 @@ def create_channels_router(service: OpenClawStatusApi) -> APIRouter:
     def openclaw_status() -> dict[str, object] | JSONResponse:
         try:
             return service.status()
-        except Exception:
+        except Exception as _e:
+            import logging; logging.getLogger(__name__).warning("channels probe failed: %s", _e)
             return JSONResponse(
                 status_code=503,
                 content={

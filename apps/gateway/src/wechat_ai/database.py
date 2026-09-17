@@ -43,10 +43,7 @@ def initialize_database(
             )
         _apply_migrations(connection, migration_paths=migration_paths)
         _record_runtime_contract(connection)
-        recover_knowledge_indexes(
-            connection,
-            force=current_version < target_version,
-        )
+        recover_knowledge_indexes(connection, force=False)
     except BaseException:
         connection.close()
         raise
