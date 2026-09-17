@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import net from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
 export const UI_URL = 'http://127.0.0.1:3108';
@@ -79,6 +80,33 @@ export function resolveLibraryDb(root) {
   const settings = JSON.parse(fs.readFileSync(settingsPath(root), 'utf8'));
   if (typeof settings.libraryDb !== 'string' || !settings.libraryDb.trim()) throw new Error('libraryDb is missing from gateway settings');
   return path.resolve(root, 'apps/gateway', settings.libraryDb);
+}
+
+export function validateLibraryDb(root) {
+  const file = resolveLibraryDb(root);
+  let database;
+  try {
+    if (!fs.lstatSync(file).isFile()) throw new Error('expected an existing ordinary file');
+    database = new DatabaseSync(file, { readOnly: true });
+    const tables = new Set(database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map(row => row.name));
+    const required = {
+      app_meta: 'key, value',
+      conversations: 'id, title, kind, message_count, last_message_at, is_favorite, is_indexing_enabled, domain, project_id, project_role',
+      messages: 'id, conversation_id, sender_id, sender_name, sent_at, type, content',
+      message_parts: 'id',
+      assets: 'id',
+      tasks: 'task_id, conversation_id, content, sender_name, sent_at, due_date, priority, status, updated_at',
+    };
+    for (const [table, columns] of Object.entries(required)) {
+      if (!tables.has(table)) throw new Error(`missing library table: ${table}`);
+      database.prepare(`SELECT ${columns} FROM ${table} LIMIT 0`).all();
+    }
+    return file;
+  } catch (error) {
+    throw new Error(`Invalid libraryDb "${file}": ${error.message}. Point gateway settings at the existing ChatOS library; no database was created.`);
+  } finally {
+    database?.close();
+  }
 }
 
 export function captureUiRuntime(root, embeddedBuild, codePath) {

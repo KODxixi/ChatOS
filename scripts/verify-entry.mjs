@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyBuild, captureUiRuntime, gatewayIdentity, inspectService, settingsPath, UI_URL, GATEWAY_URL } from './entry-contract.mjs';
+import { verifyBuild, validateLibraryDb, captureUiRuntime, gatewayIdentity, inspectService, settingsPath, UI_URL, GATEWAY_URL } from './entry-contract.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 try {
   const build = verifyBuild(root);
   const settings = JSON.parse(fs.readFileSync(settingsPath(root), 'utf8'));
   if (settings.frontendUrl !== UI_URL) throw new Error(`Set frontendUrl to ${UI_URL} in ${settingsPath(root)}`);
+  validateLibraryDb(root);
   const args = process.argv.slice(2);
   if (args.some(arg => !['--live', '--preflight'].includes(arg))) throw new Error('Usage: node scripts/verify-entry.mjs [--live | --preflight]');
   if (args.length) {
