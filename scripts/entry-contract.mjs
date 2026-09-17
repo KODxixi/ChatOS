@@ -41,6 +41,14 @@ export function sourceIdentity(root) {
   return { contractVersion: 1, sourceRelative: SOURCE_RELATIVE, originCommit: ORIGIN_COMMIT, sourceHash, buildId: sourceHash };
 }
 
+export function buildProvenance(root) {
+  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
+  return {
+    repositoryCommit: git(['rev-parse', 'HEAD']),
+    sourceDirty: git(['status', '--porcelain', '--untracked-files=all', '--', ...SOURCE_INPUTS]) !== '',
+  };
+}
+
 export function outputIdentity(dist) {
   return hashFiles(dist, filesUnder(dist).filter(file => path.relative(dist, file) !== 'build.json'));
 }
