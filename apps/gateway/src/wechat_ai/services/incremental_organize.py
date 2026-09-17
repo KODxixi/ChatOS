@@ -1,4 +1,4 @@
-"""Incremental organize pipeline (ChatOS v0.4.0).
+"""Incremental organize pipeline (ChatOS v0.4.1).
 
 Replaces the old full-rebuild ``POST /tasks/extract`` (which did
 ``DELETE FROM tasks``) with a true incremental pipeline:
@@ -11,8 +11,10 @@ last run, tracked per-conversation in ``conversation_watermarks``.
 Hard guarantees
 ---------------
 * WeChat raw tables (conversations/messages/message_parts/assets) are
-  read-only.  All writes go to derived tables (tasks,
-  conversation_watermarks, background_jobs.result_json).
+  read-only.  Activity and classification results go to
+  ``conversation_overrides`` (derived table).  All writes go to derived
+  tables (tasks, conversation_watermarks, conversation_overrides,
+  background_jobs.result_json).
 * Task identity is deterministic: ``task_id = sha1(conversation_id +
   source_message_id + content)``.  Re-running never duplicates.
 * Existing tasks are never overwritten.  ``completed`` / ``ignored`` /
@@ -142,10 +144,10 @@ def _stage_activity(
     connection: sqlite3.Connection,
     stats: OrganizeStats,
 ) -> None:
-    """Re-evaluate activity for all conversations."""
-    from .activity_filter import evaluate_activity
+    """Re-evaluate activity.  Writes to conversation_overrides, NOT conversations."""
+    from .activity_filter import evaluate_activity_overrides
 
-    result = evaluate_activity(connection, inactive_days=30)
+    result = evaluate_activity_overrides(connection, inactive_days=30)
     logger.info(
         "organize.activity: evaluated=%d marked_inactive=%d active=%d",
         result.evaluated, result.marked_inactive, result.active,
@@ -156,11 +158,12 @@ def _stage_classify(
     connection: sqlite3.Connection,
     stats: OrganizeStats,
 ) -> None:
-    """Classify only conversations that still need review."""
-    from .conversation_classifier import classify_all
+    """Classify only conversations that still need review.
+    Writes to conversation_overrides, NOT conversations."""
+    from .conversation_classifier import classify_all_overrides
 
-    result = classify_all(connection, only_needs_review=True)
-    stats.classified = getattr(result, "classified", 0) or getattr(result, "updated", 0)
+    result = classify_all_overrides(connection, only_needs_review=True)
+    stats.classified = result.classified
     logger.info("organize.classify: classified=%d", stats.classified)
 
 
@@ -169,12 +172,14 @@ def _stage_tasks(
     stats: OrganizeStats,
     jobs_service: BackgroundJobService,
     job_id: str,
-) -> None:
+) -> set[str]:
     """Extract todos from messages after each conversation's watermark.
 
     Only INSERTs new tasks.  Existing tasks (by deterministic task_id or
     source_message_id) are skipped.  Protected statuses are counted but
     never touched.
+
+    Returns the set of conversation_ids that had new tasks added.
     """
     from . import message_cleaning as mc
     from ..api.tasks import (
@@ -185,17 +190,21 @@ def _stage_tasks(
         _priority_for,
     )
 
-    # Active conversations only.
+    # Active conversations only — COALESCE override with base table.
     conv_rows = connection.execute(
         """
-        SELECT id, title FROM conversations
-        WHERE is_indexing_enabled = 1
-          AND kind IN ('group', 'direct')
-        ORDER BY id
+        SELECT c.id, c.title
+        FROM conversations c
+        LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+        WHERE COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) = 1
+          AND c.kind IN ('group', 'direct')
+        ORDER BY c.id
         """
     ).fetchall()
 
     total_convs = len(conv_rows)
+    affected_conversations: set[str] = set()
+
     for idx, conv in enumerate(conv_rows):
         conv_id = conv["id"]
         conv_title = conv["title"] or ""
@@ -254,8 +263,6 @@ def _stage_tasks(
 
         # Extract todos from these messages.
         now_ms = int(time.time() * 1000)
-        seen_bodies: set[str] = set()
-        seen_prefixes: set[str] = set()
         new_tasks: list[dict[str, Any]] = []
 
         for r in msg_rows:
@@ -269,13 +276,6 @@ def _stage_tasks(
             if len(body) < 10:
                 continue
             body = mc.truncate(body, 50)
-            if body in seen_bodies:
-                continue
-            prefix = body[:6]
-            if prefix in seen_prefixes:
-                continue
-            seen_bodies.add(body)
-            seen_prefixes.add(prefix)
             tid = _task_id(conv_id, int(r["id"]), body)
             new_tasks.append({
                 "taskId": tid,
@@ -295,6 +295,7 @@ def _stage_tasks(
             new_tasks = _llm_filter_todos(connection, new_tasks, stats)
 
         # Idempotent insert: skip existing by task_id or source_message_id.
+        conv_had_new = False
         for todo in new_tasks:
             existing = connection.execute(
                 "SELECT task_id, status FROM tasks WHERE task_id = ? OR (conversation_id = ? AND source_message_id = ?)",
@@ -323,6 +324,10 @@ def _stage_tasks(
                 ),
             )
             stats.newTasks += 1
+            conv_had_new = True
+
+        if conv_had_new:
+            affected_conversations.add(conv_id)
 
         # Advance watermark to the latest message we scanned (max sent_at, then max id).
         latest = max(msg_rows, key=lambda r: (int(r["sent_at"]), int(r["id"])))
@@ -330,6 +335,7 @@ def _stage_tasks(
         stats.watermarksAdvanced += 1
 
     connection.commit()
+    return affected_conversations
 
 
 def _llm_filter_todos(
@@ -339,8 +345,9 @@ def _llm_filter_todos(
 ) -> list[dict[str, Any]]:
     """Run LLM todo filter with cache + graceful degradation.
 
-    Returns the filtered list.  On any LLM failure, returns all
+    Returns the filtered list.  On LLM unavailability, returns all
     candidates unchanged and marks stats.llmDegraded = True.
+    Uses llm_cache for repeated inputs.
     """
     try:
         from . import llm_service as llm
@@ -361,14 +368,36 @@ def _llm_filter_todos(
         for i in range(0, len(head), 20):
             batch = head[i : i + 20]
             items = [{"index": j, "text": t["content"]} for j, t in enumerate(batch)]
+
+            # Check cache keyed on batch content.
+            cache_ref = f"batch_{i}"
+            cache_content = json.dumps(items, ensure_ascii=False, sort_keys=True)
+            cached = llm.get_cached(connection, "filter_todos", cache_ref, cache_content)
+            if cached is not None:
+                try:
+                    keep_map = json.loads(cached)
+                    for j, t in enumerate(batch):
+                        if str(j) in keep_map:
+                            t["content"] = keep_map[str(j)]
+                            filtered.append(t)
+                    continue
+                except (json.JSONDecodeError, TypeError):
+                    pass  # cache corrupt, fall through to live call
+
             try:
                 res = llm.filter_todos(items)
                 keep_idx = {r["index"]: r["text"] for r in res}
+                # Store in cache.
+                llm.put_cached(
+                    connection, "filter_todos", cache_ref, cache_content,
+                    json.dumps({str(k): v for k, v in keep_idx.items()}, ensure_ascii=False),
+                )
                 for j, t in enumerate(batch):
                     if j in keep_idx:
                         t["content"] = keep_idx[j]
                         filtered.append(t)
             except Exception as exc:
+                # OpenAICompatibleUnavailable or other model failure → degrade.
                 logger.warning("organize.llm_filter batch failed: %s", exc)
                 filtered.extend(batch)
                 stats.llmDegraded = True
@@ -384,17 +413,30 @@ def _stage_projects(
     connection: sqlite3.Connection,
     stats: OrganizeStats,
     vault_root: Path,
+    affected_conversations: set[str],
 ) -> None:
-    """Re-extract projects.  Only touches project-domain conversations."""
+    """Re-extract projects only for affected conversations.
+
+    If no conversations had new tasks, projectsUpdated stays 0.
+    """
     from .project_extractor import extract_projects
 
+    if not affected_conversations:
+        stats.projectsUpdated = 0
+        logger.info("organize.projects: no affected conversations, skipping")
+        return
+
     try:
-        projects = extract_projects(connection, vault_root=vault_root, min_messages=10)
+        projects = extract_projects(
+            connection, vault_root=vault_root, min_messages=10,
+            conversation_ids=tuple(sorted(affected_conversations)),
+        )
         stats.projectsUpdated = len(projects)
-        logger.info("organize.projects: updated=%d", stats.projectsUpdated)
+        logger.info("organize.projects: updated=%d (affected=%d)", stats.projectsUpdated, len(affected_conversations))
     except Exception as exc:
         logger.warning("organize.projects failed: %s", exc)
-        stats.llmDegraded = True
+        # Project extraction failure is NOT an LLM degradation.
+        stats.projectsUpdated = 0
 
 
 # ---------------------------------------------------------------------------
@@ -425,17 +467,19 @@ def run_incremental_organize(
             _stage_activity(connection, stats)
 
             # Stage 2: classify
+            connection.commit()
             jobs_service.transition(job_id, status="running", stage="classify", progress_current=2, progress_total=total_stages)
             _stage_classify(connection, stats)
 
             # Stage 3: tasks (incremental, watermark-based)
+            connection.commit()
             jobs_service.transition(job_id, status="running", stage="tasks", progress_current=3, progress_total=total_stages)
-            _stage_tasks(connection, stats, jobs_service, job_id)
+            affected = _stage_tasks(connection, stats, jobs_service, job_id)
 
-            # Stage 4: projects
+            # Stage 4: projects (only affected conversations)
             connection.commit()
             jobs_service.transition(job_id, status="running", stage="projects", progress_current=4, progress_total=total_stages)
-            _stage_projects(connection, stats, vault_root)
+            _stage_projects(connection, stats, vault_root, affected)
 
             # Stage 5: finish — persist result
             connection.commit()
@@ -447,8 +491,7 @@ def run_incremental_organize(
         logger.info(
             "organize.complete: newTasks=%d duplicates=%d protected=%d watermarks=%d degraded=%s",
             stats.newTasks, stats.duplicatesSkipped,
-            stats.protectedTasksPreserved, stats.watermarksAdvanced,
-            stats.llmDegraded,
+            stats.protectedTasksPreserved, stats.watermarksAdvanced, stats.llmDegraded,
         )
 
         if stats.llmDegraded:

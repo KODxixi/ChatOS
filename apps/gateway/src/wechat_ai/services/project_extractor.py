@@ -74,26 +74,47 @@ def extract_projects(
     *,
     vault_root: Path,
     min_messages: int = 10,
+    conversation_ids: tuple[str, ...] | None = None,
 ) -> list[ProjectInfo]:
     """Extract project information from project-domain conversations.
 
     Returns a list of ProjectInfo objects and writes project-brief.md files
     to vault_root/conversations/project/{project_id}/.
+
+    When *conversation_ids* is provided, only those conversations are
+    considered (incremental mode).
     """
     now_ms = int(time.time() * 1000)
 
-    # Get all project-domain conversations
-    convs = connection.execute(
-        """
-        SELECT id, title, message_count
-        FROM conversations
-        WHERE domain = 'project'
-          AND is_indexing_enabled = 1
-          AND message_count >= ?
-        ORDER BY message_count DESC
-        """,
-        (min_messages,),
-    ).fetchall()
+    # Get project-domain conversations (COALESCE overrides with base table).
+    if conversation_ids:
+        placeholders = ", ".join("?" for _ in conversation_ids)
+        convs = connection.execute(
+            f"""
+            SELECT c.id, c.title, c.message_count
+            FROM conversations c
+            LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+            WHERE c.id IN ({placeholders})
+              AND COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) = 1
+              AND COALESCE(o.domain, c.domain) = 'project'
+              AND c.message_count >= ?
+            ORDER BY c.message_count DESC
+            """,
+            (*conversation_ids, min_messages),
+        ).fetchall()
+    else:
+        convs = connection.execute(
+            """
+            SELECT c.id, c.title, c.message_count
+            FROM conversations c
+            LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+            WHERE COALESCE(o.domain, c.domain) = 'project'
+              AND COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) = 1
+              AND c.message_count >= ?
+            ORDER BY c.message_count DESC
+            """,
+            (min_messages,),
+        ).fetchall()
 
     # Group by project name
     projects: dict[str, ProjectInfo] = {}

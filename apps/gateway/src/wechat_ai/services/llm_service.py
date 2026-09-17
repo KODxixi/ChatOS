@@ -161,7 +161,9 @@ def summarize(messages_text: str) -> str | None:
 def filter_todos(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """LLM secondary filter. items: [{"index","text"}]. Returns kept items with cleaned text.
 
-    On any failure returns the original list unchanged.
+    Raises OpenAICompatibleUnavailable when the model is unreachable so the
+    caller can mark degradation.  JSON parse failures and empty keep results
+    return the original items (valid responses, not failures).
     """
     if not items:
         return items
@@ -172,10 +174,8 @@ def filter_todos(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "只输出JSON数组，不要解释。"
     )
     lines = "\n".join(f"{i}. {it['text']}" for i, it in enumerate(items))
-    try:
-        raw = complete(system, lines, max_tokens=800, temperature=0.1)
-    except OpenAICompatibleUnavailable:
-        return items
+    # Let OpenAICompatibleUnavailable propagate so caller marks degraded.
+    raw = complete(system, lines, max_tokens=800, temperature=0.1)
     # extract JSON array
     raw = raw.strip()
     start = raw.find("[")

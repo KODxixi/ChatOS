@@ -218,3 +218,94 @@ def classify_all(
         result.by_domain,
     )
     return result
+
+
+def classify_all_overrides(
+    connection: sqlite3.Connection,
+    *,
+    only_needs_review: bool = True,
+) -> ClassificationResult:
+    """Same as classify_all but writes to conversation_overrides,
+    never touches the raw conversations table.
+    """
+    now_ms = int(time.time() * 1000)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    if only_needs_review:
+        rows = connection.execute(
+            """
+            SELECT c.id, c.title, c.kind,
+                   COALESCE(o.classification_status, c.classification_status, 'needs_review') AS status
+            FROM conversations c
+            LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+            WHERE COALESCE(o.classification_status, c.classification_status, 'needs_review') IS NULL
+               OR COALESCE(o.classification_status, c.classification_status, 'needs_review') = 'needs_review'
+            """
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT c.id, c.title, c.kind,
+                   COALESCE(o.classification_status, c.classification_status, 'needs_review') AS status
+            FROM conversations c
+            LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+            """
+        ).fetchall()
+
+    by_domain: dict[str, int] = {}
+    classified = 0
+    needs_review = 0
+
+    for row in rows:
+        conv_id = row["id"]
+        title = row["title"] or ""
+        kind = row["kind"]
+
+        sample = connection.execute(
+            """
+            SELECT content FROM messages
+            WHERE conversation_id = ? AND content IS NOT NULL
+            ORDER BY sent_at DESC LIMIT 3
+            """,
+            (conv_id,),
+        ).fetchall()
+        sample_text = " ".join(r["content"] or "" for r in sample)[:500]
+
+        domain, role, status = classify_conversation(
+            title, kind, sample_content=sample_text or None,
+        )
+
+        connection.execute(
+            """
+            INSERT INTO conversation_overrides
+                (conversation_id, domain, project_role, classification_status, classified_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                domain = excluded.domain,
+                project_role = excluded.project_role,
+                classification_status = excluded.classification_status,
+                classified_at = excluded.classified_at,
+                updated_at = excluded.updated_at
+            """,
+            (conv_id, domain, role, status, now_ms, now_iso),
+        )
+
+        by_domain[domain] = by_domain.get(domain, 0) + 1
+        if status == "auto":
+            classified += 1
+        else:
+            needs_review += 1
+
+    connection.commit()
+
+    result = ClassificationResult(
+        evaluated=len(rows),
+        classified=classified,
+        needs_review=needs_review,
+        by_domain=by_domain,
+    )
+    logger.info(
+        "classification overrides: evaluated=%d classified=%d needs_review=%d",
+        result.evaluated, result.classified, result.needs_review,
+    )
+    return result

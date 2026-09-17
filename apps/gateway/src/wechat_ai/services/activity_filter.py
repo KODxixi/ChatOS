@@ -179,3 +179,87 @@ def evaluate_activity(
         inactive_days,
     )
     return result
+
+
+def evaluate_activity_overrides(
+    connection: sqlite3.Connection,
+    *,
+    user_wxid: str | None = None,
+    inactive_days: int = 30,
+) -> ActivityEvaluationResult:
+    """Same as evaluate_activity but writes to conversation_overrides,
+    never touches the raw conversations table.
+    """
+    if user_wxid is None:
+        user_wxid = detect_user_wxid(connection)
+    if not user_wxid:
+        logger.warning("activity filter: cannot determine user wxid, skipping")
+        return ActivityEvaluationResult(
+            user_wxid="", inactive_days=inactive_days,
+            evaluated=0, marked_inactive=0, already_inactive=0, active=0, marked_ids=(),
+        )
+
+    cutoff_ms = int((time.time() - inactive_days * 86400) * 1000)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    conv_rows = connection.execute(
+        """
+        SELECT c.id, c.title, c.kind,
+               COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) AS enabled
+        FROM conversations c
+        LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+        WHERE c.kind IN ('group', 'direct', 'system')
+        """
+    ).fetchall()
+
+    marked_ids: list[str] = []
+    already_inactive = 0
+    active = 0
+
+    for conv in conv_rows:
+        conv_id = conv["id"]
+        if not conv["enabled"]:
+            already_inactive += 1
+            continue
+
+        user_recent = connection.execute(
+            """
+            SELECT COUNT(*) FROM messages
+            WHERE conversation_id = ? AND sender_id = ? AND sent_at >= ?
+            """,
+            (conv_id, user_wxid, cutoff_ms),
+        ).fetchone()[0]
+
+        if user_recent == 0:
+            connection.execute(
+                """
+                INSERT INTO conversation_overrides
+                    (conversation_id, is_indexing_enabled, updated_at)
+                VALUES (?, 0, ?)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    is_indexing_enabled = 0,
+                    updated_at = excluded.updated_at
+                """,
+                (conv_id, now_iso),
+            )
+            connection.execute(
+                "DELETE FROM retrieval_chunks WHERE conversation_id = ?",
+                (conv_id,),
+            )
+            marked_ids.append(conv_id)
+        else:
+            active += 1
+
+    connection.commit()
+
+    result = ActivityEvaluationResult(
+        user_wxid=user_wxid, inactive_days=inactive_days,
+        evaluated=len(conv_rows), marked_inactive=len(marked_ids),
+        already_inactive=already_inactive, active=active,
+        marked_ids=tuple(marked_ids),
+    )
+    logger.info(
+        "activity overrides: evaluated=%d marked_inactive=%d already_inactive=%d active=%d",
+        result.evaluated, result.marked_inactive, result.already_inactive, result.active,
+    )
+    return result
