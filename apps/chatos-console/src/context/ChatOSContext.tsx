@@ -1107,6 +1107,14 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }),
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
+        const savedComment = await res.json() as ProjectComment;
+        // Replace client-temp id with server-authoritative id so subsequent
+        // reaction/delete calls address the right entity.
+        setProjectComments(prev => ({
+          ...prev,
+          [projectId]: (prev[projectId] || []).map(c => c.id === newComment.id ? { ...c, id: savedComment.id } : c),
+        }));
+        return savedComment;
       } catch (e) {
         setProjectComments(prev => ({
           ...prev,
@@ -1120,14 +1128,15 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         showToast('评论保存失败，已回滚');
         return null;
       }
-
-      return newComment;
     },
     [teamMembers, projects, showToast]
   );
 
   const deleteProjectComment = useCallback(
     async (projectId: string, commentId: string) => {
+      // Save the removed comment so we can restore it on failure.
+      const commentsBefore = projectComments[projectId] || [];
+      const removedComment = commentsBefore.find(c => c.id === commentId);
       setProjectComments(prev => ({
         ...prev,
         [projectId]: (prev[projectId] || []).filter(c => c.id !== commentId),
@@ -1151,10 +1160,21 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
       } catch (e) {
-        showToast('删除评论失败，请刷新后重试');
+        if (removedComment) {
+          setProjectComments(prev => ({
+            ...prev,
+            [projectId]: [removedComment, ...(prev[projectId] || [])],
+          }));
+          setProjects(prev => prev.map(p =>
+            p.id === projectId
+              ? { ...p, commentsCount: (p.commentsCount || 0) + 1 }
+              : p
+          ));
+        }
+        showToast('删除评论失败，已回滚');
       }
     },
-    [showToast]
+    [projectComments, showToast]
   );
 
   const toggleCommentReaction = useCallback(
@@ -1188,6 +1208,8 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return { ...prev, [projectId]: updated };
       });
 
+      // Snapshot reactions for rollback.
+      const snapshot = (projectComments[projectId] || []).find(c => c.id === commentId)?.reactions;
       try {
         const res = await fetch(`/api/collaborative/projects/${projectId}/comments/${commentId}/reactions`, {
           method: 'POST',
@@ -1196,10 +1218,18 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
         if (!res.ok) throw new Error(`collaborative ${res.status}`);
       } catch (e) {
-        showToast('表情反应同步失败，请刷新后重试');
+        if (snapshot) {
+          setProjectComments(prev => ({
+            ...prev,
+            [projectId]: (prev[projectId] || []).map(c =>
+              c.id === commentId ? { ...c, reactions: snapshot } : c
+            ),
+          }));
+        }
+        showToast('表情反应同步失败，已回滚');
       }
     },
-    []
+    [projectComments]
   );
 
   const toggleFollowConversation = useCallback((id: string) => {
