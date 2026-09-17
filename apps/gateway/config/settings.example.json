@@ -1,0 +1,10 @@
+{
+  "libraryDb": "D:\\ChatOS-Vault\\library\\wechat-ai.sqlite",
+  "webDist": "../chatos-console/dist",
+  "frontendUrl": "http://127.0.0.1:3108",
+  "rerankEnabled": false,
+  "activityFilterEnabled": true,
+  "activityFilterInactiveDays": 30,
+  "lmStudio": { "baseUrl": "http://127.0.0.1:1234/v1" },
+  "llamaSwap": { "retrievalBaseUrl": "http://127.0.0.1:9123/v1" }
+}

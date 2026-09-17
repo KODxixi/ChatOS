@@ -1,105 +1,37 @@
 # AGENTS.md
 
-> 本文件给在此仓库工作的 AI agent / 贡献者定位用。人类读者先看 [README.md](README.md)。
-> 读完本文件再动手；任何修改前先确认「硬约定 / 禁忌」一节。
+<!-- repository-verify: scripts/verify-entry.mjs -->
 
-## 这是什么
+ChatOS 将微信只读原始数据变成可检索的本地第二大脑。贡献前先看本文件禁忌与当前组件 AGENTS。
 
-**ChatOS = 微信会话第二大脑。** 从微信 PC 端解密后的对话中自动提取摘要、待办、项目，
-在本地构建一个可检索、可图谱化的个人知识库。一句话：
+## 唯一维护的源码与入口
 
-> **ChatOS 是跑在 127.0.0.1:8912 上的本地 Web 应用，把只读的微信原始 SQLite 变成一个带 LLM 摘要、
-> 待办、项目、知识图谱的第二大脑。**
+- 正式 UI：`apps/chatos-console`，来自原型 commit `e9d78e9c3f1c216c668a4810fe890d764131b88a`；Vite + React + Express，`http://127.0.0.1:3108/`。
+- 正式网关：`apps/gateway`，FastAPI，8912 保留全部 API；网页入口按本地配置跳转正式 UI。
+- 统一启动：`scripts/start_chatos.bat` → Node 标准库 `scripts/start_chatos.mjs`。无需 PowerShell 执行策略修改。
+- 唯一运行配置：`apps/gateway/config/settings.json`；模板同目录 `settings.example.json`。`libraryDb` 同时供 UI 只读适配与网关使用，`frontendUrl` 指向正式 UI。
+- 历史原型：`artifacts/chatos-ui-aistudio` 已退役，只作来源证据；旧正式前端可从 `var/backups/canonical-entry-20260917/` 恢复。
+- 默认门控：`node scripts/verify-entry.mjs` 检查源码、构建、配置；`--live` 额外核验两项服务的启动身份、跳转与线上 HTML/assets。
 
-- 前端：Vite + React 19 + TypeScript，`apps/chatos-console/`
-- 后端：Python ≥3.13 + FastAPI + uvicorn（Cordis 风格 plugin kernel），`apps/gateway/`
-- 数据库：SQLite，微信原始数据只读，派生表全部新建
-- LLM：**本地 LM Studio 优先**（`http://localhost:1234/v1`，embedding + chat + reranker 全本地），外部 API（APIYI）仅作降级 fallback；异步摘要 + 待办过滤 + `llm_cache` 数据库缓存
-- 设计系统：Gary-UI Liquid Glass，CSS 变量驱动，零硬编码色值
+## 实际接入范围
 
-## 架构概览
+会话列表与消息来自真实 SQLite 只读适配；摘要、关系和排序含原型启发式。待办、项目、资料库、图谱、协作及当前用户身份含演示数据/内存状态，尚未接入网关完整业务。界面已标注范围；不能以正式入口就绪宣称所有功能生产可用。Thinking Mode 仅请求本地 LM Studio，配置存在不等于模型已加载。
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Browser  http://127.0.0.1:8912/                                    │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │ chatos-console  (React SPA, Vite build → dist/)              │  │
-│  │  TopBar / SegmentedControl / ConversationList / Detail        │  │
-│  │  TasksPage / ProjectsPage / AuditOverlay / GraphOverlay      │  │
-│  └──────────────────────────────┬────────────────────────────────┘  │
-└─────────────────────────────────┼───────────────────────────────────┘
-                                  │ fetch /api/* (同源)
-┌─────────────────────────────────┼───────────────────────────────────┐
-│  FastAPI  app.py create_app()   ▼                                   │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │ plugins/kernel.py  +  plugins/composition.py                  │  │
-│  │  声明式 plugin 行：core / credentials / jobs / gchat /       │  │
-│  │  media / projection / semantic / query / answer / ...          │  │
-│  └───────┬───────────────────────┬───────────────────┬────────────┘  │
-│          │                       │                   │               │
-│  api/*.py routers        services/*.py      llm_service.py         │
-│  (HTTP 层，参数/错误)    (业务逻辑，事务)   (非流式 LLM + DB 缓存)  │
-└──────────┼───────────────────────┼───────────────────┼──────────────┘
-           │                       │                   │
-           ▼                       ▼                   ▼
-   ┌──────────────────────────────────────────────────────────┐
-   │ SQLite  D:\ChatOS-Vault\library\wechat-ai.sqlite (338MB) │
-   │  · 微信原始表 conversations/messages/message_parts/…   │
-   │    → 只读，绝不 INSERT/UPDATE/DELETE                    │
-   │  · 派生表 tasks / llm_cache / projects / graph_…        │
-   │    → 由 migrations/001-016.sql 建立，可写             │
-   │  PRAGMA: journal_mode=WAL, foreign_keys=ON, busy_timeout=30s │
-   └──────────────────────────────────────────────────────────┘
-```
-
-**请求路径约定**：所有 HTTP 端点都挂在 `/api` 前缀下（前端 `src/api/index.ts` 的 `API_BASE='/api'`）。
-`/` 由 `plugins/frontend.py` 静态托管 `webDist`（即 `apps/chatos-console/dist/`）。
-
-## 目录结构
-
-### 仓库根
+## 目录与分工
 
 | 路径 | 职责 |
 |---|---|
-| `apps/chatos-console/` | 前端 SPA（详见该目录下的 `AGENTS.md`） |
-| `apps/gateway/` | 后端网关（详见该目录下的 `AGENTS.md`） |
-| `config/` | 运行配置 `settings.json`（gitignore 真实值，只入模板） |
-| `classification/` | 会话分类体系与规则（`taxonomy.md`） |
-| `bridges/archos/` | 与 ArchOS 建筑设计系统的数据契约 |
-| `scripts/` | 启动/运维脚本，如 `start_chatos.bat` |
-| `tests/` | 仓库级测试；前后端各自有自己的 tests |
-| `key/` | 部署私钥，**绝不入库** |
-
-### 后端 `apps/gateway/src/wechat_ai/`
-
-| 路径 | 职责 |
-|---|---|
-| `app.py` | `create_app()`，只做 bootstrap；真正的组装在 plugin kernel |
-| `cli.py` | typer CLI：`serve --port --no-browser` |
-| `config.py` | `Settings` dataclass + `load_settings()`，读 `config/settings.json` |
-| `paths.py` | 项目根 / 相对路径解析 |
-| `database.py` | 连接工厂、PRAGMA、**启动自动跑 migrations**、`app_meta.schema_version` |
-| `openai_compatible.py` | OpenAI 兼容客户端异常 `OpenAICompatibleUnavailable` |
-| `plugins/` | Cordis 风格 kernel：`kernel.py`（拓扑排序+应用 plugin）、`composition.py`（plugin 行清单）、各业务 plugin（core/query/gchat/media/answer/frontend…） |
-| `api/` | HTTP 路由层，一个文件一组资源（见下文 API 一览） |
-| `services/` | 业务逻辑层：`llm_service`、`message_cleaning`、`conversation_service`、`tasks` 相关、`graph_service`、`search_service`、`knowledge_archiver` 等 |
-| `migrations/` | 编号 SQL：`001_initial.sql` … `016_llm_cache.sql`，启动时按序号执行 |
-
-### 前端 `apps/chatos-console/src/`
-
-| 路径 | 职责 |
-|---|---|
-| `api/index.ts` | 唯一 API 客户端，`fetchJson<T>()` 封装，全部端点在此 |
-| `components/` | 通用/视图组件：TopBar、SegmentedControl、ConversationList、ConversationDetail、EmptyState、AuditOverlay、GraphOverlay |
-| `pages/` | 整页：TasksPage、ProjectsPage |
-| `styles/` | `gary-base.css`（token/CSS 变量）、`gary-components.css`（组件类）、`demo.css` |
-| `types/index.ts` | 全部 TS 类型（Conversation、Task、Project、GraphData…） |
-| `utils/` | `format.ts`（时间/字节）、`ui.ts`、`denoise.ts` |
-| `vendor/gary/` | Gary-UI 母源 vendored：`material.js`、`glass-surface.js`、`optical-glass.js`、`gradient-waves.js`、`dot-grid.js`、`icons.js`、`chart-recipes.js` |
+| `apps/chatos-console/server.ts` | Express 只读 SQLite 适配、演示协作和 UI 静态服务 |
+| `apps/chatos-console/src/` | 原型提升后的唯一 React 组件树、context、core、vendor |
+| `apps/chatos-console/scripts/build.mjs` | UI/服务端构建与内容身份生成 |
+| `apps/gateway/src/wechat_ai/` | 网关 api/services/plugins/migrations，保留既有后端修复 |
+| `scripts/entry-contract.mjs` | 源码/输出摘要、端口与运行身份契约 |
+| `classification/`、`bridges/archos/` | 分类规则、跨项目契约 |
+| `var/` | 忽略的备份、日志、运行证据；不是源码 |
 
 ## 核心数据模型
 
-数据库：`D:\ChatOS-Vault\library\wechat-ai.sqlite`（由 `config/settings.json` 的 `libraryDb` 指定）。
+数据库：`D:\ChatOS-Vault\library\wechat-ai.sqlite`（由 `apps/gateway/config/settings.json` 的 `libraryDb` 指定）。
 WAL 模式，`busy_timeout=30000`。**原始表只读，派生表可写。**
 
 ### 原始表（微信解密导入，只读）
@@ -150,7 +82,7 @@ expires_at  INTEGER                -- 可空；非空且过期会被 GC 删除
 
 ## API 一览
 
-前端只通过 `src/api/index.ts` 访问，同源 `/api`。关键端点：
+以下是 8912 网关 API；3108 的 Express 同源 API 保留现有只读适配与演示协作，两者并未全量桥接。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -179,67 +111,31 @@ expires_at  INTEGER                -- 可空；非空且过期会被 GC 删除
 
 ## 开发流程
 
-### 启动（生产/日常用）
-
-```powershell
-# 一键（scripts\start_chatos.bat 会复用已监听 8912 的实例）
-cd C:\ChatOS
-scripts\start_chatos.bat
-
-# 或直接
-cd C:\ChatOS\apps\gateway
-.venv\Scripts\chatbox.exe serve --port 8912 --no-browser
-```
-
-CLI 默认端口 8765；`serve` 启动前会探测 `/api/runtime`，发现同端口已有兼容实例就直接复用、不重复起服务。
-
-### 前端开发 / 构建
+### 正式入口与验证
 
 ```powershell
 cd C:\ChatOS\apps\chatos-console
-npm install
-npm run dev        # Vite dev server（独立调试用）
-npm run typecheck  # tsc -p tsconfig.app.json
-npm run build      # = typecheck + vite build → dist/
+npm ci
+npm run build
+npm test
+cd C:\ChatOS
+node scripts/verify-entry.mjs
+scripts\start_chatos.bat
+node scripts/verify-entry.mjs --live
 ```
 
-**重要**：后端在 `/` 静态托管 `dist/`。改完前端必须 `npm run build`，再重启/刷新后端才生效；
-只有纯前端调试才开 `npm run dev`。
+启动器先验证源码受 Git 追踪（允许 staged）、内容摘要、构建输出和配置，再复用相同身份的实例或隐藏启动。未知/旧端口占用直接失败，不杀进程。修改源码后重建；运行中的旧进程不会因磁盘构建被替换而冒充新版本。网关改动也需要核对启动身份。
 
-### 后端测试
+开发用 `npm run dev` 默认 3109；其身份不能通过正式门控。原型目录与 3000 记录为历史，不用于正式启动。后端单独开发仍可用 `apps/gateway/.venv/Scripts/python.exe -m wechat_ai serve --port 8912 --no-browser`，它不启动 UI，正式流程统一走根启动器。
 
-```powershell
-cd C:\ChatOS\apps\gateway
-.venv\Scripts\python -m pytest -q        # 后端 pytest
-# 前端无单测框架，用 node 直接跑：
-node --experimental-strip-types tests/   # apps/chatos-console/tests/
-```
+Node >=22.13（node:sqlite）、Python >=3.13；日志 `var/logs/`，构建 `apps/chatos-console/dist/`，备份 `var/backups/`，均不入 Git。数据由 `apps/gateway/config/settings.json` 的 `libraryDb` 指向外部数据根。详见 [启动与恢复](docs/canonical-entry.md)。
 
-## 代码规范
+## 代码与设计规范
 
-- **前端**：TypeScript `strict`（`tsconfig.app.json`）；组件 props 必须显式类型；事件 props 以 `onXxx` 命名；
-  不引入全局状态库，状态用 `useState`/`useReducer` 就近管理。
-- **后端**：PEP 8 + 全量 type hints；新增端点走 `api/` 新 router 文件并在 plugin 中注册；
-  错误一律用 `_errors.py` 的 helper，不要裸 `raise HTTPException`。
-- **样式**：CSS 变量优先，零硬编码色值（见下节）。
-
-## 设计系统：Gary-UI Liquid Glass
-
-所有颜色/材质走 `src/styles/gary-base.css` 的 CSS 变量，组件只引用 token：
-
-| 变量 | 含义 |
-|---|---|
-| `--bg` | 页面底色（深） |
-| `--panel` | 面板/卡片底 |
-| `--raised` | 浮起层（overlay） |
-| `--ink` | 主文字 |
-| `--muted` | 次要文字 |
-| `--line` | 分隔线 |
-| `--accent` | 强调色 |
-
-三种材质分工（`vendor/gary/material.js` + `glass-surface.js` + `optical-glass.js`）：
-**base**（页面）/ **panel**（列表、详情卡片）/ **raised**（Overlay：审计、图谱）。
-新增组件时先复用 `.button`、`.detail-col` 等已有类，不要新写色值。
+保留 e9d78e9 原型现有 React/Express 与 Gary-UI 视觉；不要恢复旧组件树、迁整套适配到 Python、或顺手重设计。新增样式复用现有 token，禁止反向修改 Gary-UI 母源。
+前端状态在 `src/context/ChatOSContext.tsx`，HTTP 适配在 `server.ts`；会话读取 SQLite 为只读，其余演示状态在浏览器/进程内存中。
+后端继续按 `api/`、`services/`、`plugins/` 分层；错误走已有 helper，保持本地会话保护。
+新非平凡逻辑先 RED 再 GREEN；HTTP/资源验证不能替代浏览器视觉验收。
 
 ## LLM 集成（本地模型优先，零外部额度）
 
@@ -327,9 +223,9 @@ chat/VLM 走 **LM Studio 1234**（CUDA，按需加载）。两个服务独立运
 
 | 症状 | 排查 |
 |---|---|
-| 服务启动失败 / 端口被占 | `serve` 会探测 `/api/runtime`；旧版本残留 → 先结束旧 `chatbox.exe`。日志看根目录 `_srv_err.log` / `_srv_out.log` |
+| 服务启动失败 / 端口被占 | 根启动器按源码与启动身份核验；未知/过期服务拒绝复用，先核实 PID/可执行文件/源码归属再处理；日志见 `var/logs/` |
 | LLM 401 / 摘要没生效 | `APIYI_API_KEY` 未设或 key 失效；`llm_service.is_available()` 应为 True；此时摘要自动回退规则式，功能不挂 |
-| 前端白屏 | 前端改完没跑 `npm run build`；或 `config/settings.json` 的 `webDist` 指向了不存在的 dist |
+| 前端白屏 | 前端改完没构建或 3108 未启动；先跑 `node scripts/verify-entry.mjs --live` |
 | 数据库锁定 / `database is locked` | WAL + 30s busy_timeout 已缓解；仍报锁通常是外部进程独占打开了 sqlite，关闭后重启 |
 | 媒体打不开 | `apps/gateway/config.json` 的 `db_dir` 没配，媒体根解析不到；`/api/assets/{id}` 依赖它 |
 | 迁移没跑 | `app_meta.schema_version` 对不上 migrations 最大序号；删库前先备份（`data/backups/`） |

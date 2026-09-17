@@ -31,6 +31,24 @@ APP_VERSION = _application_version()
 API_CONTRACT_VERSION = "2026-08-05"
 
 
+def gateway_source_identity(root: Path) -> str:
+    """Hash source bytes using the same ordering/framing as the repository gate."""
+    files = [p for p in (root / "src").rglob("*") if p.is_file() and p.suffix in {".py", ".sql"}]
+    files.extend(root / name for name in ("pyproject.toml", "uv.lock") if (root / name).is_file())
+    digest = hashlib.sha256()
+    for file in sorted(files, key=lambda p: p.relative_to(root).as_posix()):
+        digest.update(file.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+GATEWAY_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+# Process-start snapshot, never computed from a replaced file at request time.
+GATEWAY_STARTUP_IDENTITY = gateway_source_identity(GATEWAY_SOURCE_ROOT)
+
+
 def web_build_id(web_dist: Path) -> str:
     """Return a deterministic content hash without exposing local paths."""
 

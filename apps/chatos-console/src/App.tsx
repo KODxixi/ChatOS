@@ -1,178 +1,92 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { ConversationPreview, Project } from './types'
-import { getConversationPreviews, getTasks, getProjects, searchMessages, searchSemantic } from './api'
-import TopBar from './components/TopBar'
-import ConversationCard from './components/ConversationCard'
-import ProjectCard from './components/ProjectCard'
-import ConversationDetail from './components/ConversationDetail'
-import TodoSidebar from './components/TodoSidebar'
-import AuditOverlay from './components/AuditOverlay'
-import GraphOverlay from './components/GraphOverlay'
-import AgentPanel from './components/agent/AgentPanel'
+import React, { useState } from 'react';
+import { ChatOSProvider, useChatOS } from './context/ChatOSContext';
+import { Sidebar } from './components/Sidebar';
+import { Header } from './components/Header';
+import { ConversationsView } from './components/views/ConversationsView';
+import { TodosView } from './components/views/TodosView';
+import { ProjectsView } from './components/views/ProjectsView';
+import { LibraryView } from './components/views/LibraryView';
+import { MindmapView } from './components/views/mindmap/MindmapView';
+import { RightDetailPanel } from './components/RightDetailPanel';
+import { CommandPalette } from './components/CommandPalette';
+import { AuxModals } from './components/AuxModals';
+import { CreateModal } from './components/CreateModal';
+import { ThinkingCopilotModal } from './components/ThinkingCopilotModal';
+import { CheckCircle, AlertCircle } from 'lucide-react';
 
-interface HitRow {
-  key: string
-  conversationId: string
-  conversationTitle: string
-  senderName: string
-  snippet: string
-  kind: 'keyword' | 'semantic'
-  score?: number
-}
-
-export default function App() {
-  const [query, setQuery] = useState('')
-  const [previews, setPreviews] = useState<ConversationPreview[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [todoCount, setTodoCount] = useState(0)
-  const [loadError, setLoadError] = useState(false)
-  const [auditOpen, setAuditOpen] = useState(false)
-  const [graphOpen, setGraphOpen] = useState(false)
-  const [agentOpen, setAgentOpen] = useState(false)
-  const [todosOpen, setTodosOpen] = useState(false)
-  const [hits, setHits] = useState<HitRow[] | null>(null)
-  const [filter, setFilter] = useState<'all' | 'todo' | 'project' | 'unread'>('all')
-
-  const load = useCallback(() => {
-    setLoadError(false)
-    getConversationPreviews(150, true).then((p) => setPreviews(p.items)).catch((e) => { console.error(e); setLoadError(true) })
-    getProjects(5).then((p) => setProjects(p.items)).catch((e) => console.error('[projects]', e))
-    getTasks('todo', 100).then((t) => setTodoCount(t.total)).catch((e) => console.error(e))
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  // Semantic + keyword search merge.
-  useEffect(() => {
-    const q = query.trim()
-    if (q.length < 2) { setHits(null); return }
-    let cancelled = false
-    const t = setTimeout(() => {
-      Promise.allSettled([searchMessages(q, 30), searchSemantic(q, undefined, 10)]).then(([kw, sem]) => {
-        if (cancelled) return
-        const rows: HitRow[] = []
-        const seen = new Set<string>()
-        if (sem.status === 'fulfilled') for (const s of sem.value.results) {
-          seen.add(s.messageId)
-          rows.push({ key: 's' + s.messageId, conversationId: s.conversationId, conversationTitle: s.conversationTitle, senderName: s.senderName, snippet: s.highlight || s.content, kind: 'semantic', score: s.similarityScore })
-        }
-        if (kw.status === 'fulfilled') for (const k of kw.value.items) {
-          if (seen.has(String(k.id))) continue
-          seen.add(String(k.id))
-          rows.push({ key: 'k' + k.id, conversationId: k.conversationId, conversationTitle: k.conversationTitle, senderName: k.senderName, snippet: k.content, kind: 'keyword' })
-        }
-        setHits(rows.length ? rows : null)
-      })
-    }, 300)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [query])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); document.getElementById('global-search')?.focus() }
-      if (e.key === 'Escape') { setAuditOpen(false); setGraphOpen(false); setTodosOpen(false); setAgentOpen(false) }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  const searching = query.trim().length >= 2 && hits !== null
-  const selected = previews.find((c) => c.id === selectedId) || null
-  const activeProjectId = selected?.projectId ?? null
-
-  const HOUR = 3600_000
-  const multiProjects = projects.filter((p) => p.conversationCount > 1)
-  const visiblePreviews = previews.filter((c) => {
-    if (filter === 'todo') return (c.todoCount ?? 0) > 0
-    if (filter === 'unread') {
-      const t = c.latestSentAt || c.lastMessageAt
-      return !!t && Date.now() - t < HOUR
-    }
-    return true
-  })
-  const visibleProjects = filter === 'project' ? multiProjects : (filter === 'all' ? multiProjects : [])
-
-  const FILTERS: { id: typeof filter; label: string }[] = [
-    { id: 'all', label: '全部' },
-    { id: 'todo', label: '待办' },
-    { id: 'project', label: '项目' },
-    { id: 'unread', label: '未读' },
-  ]
+const ChatOSMain: React.FC = () => {
+  const { activeWorkspace, isInspectorOpen, toastMessage } = useChatOS();
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
+  const [isThinkingModalOpen, setIsThinkingModalOpen] = useState<boolean>(false);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <TopBar
-        query={query}
-        onQuery={setQuery}
-        onOpenAudit={() => setAuditOpen(true)}
-        onOpenGraph={() => setGraphOpen(true)}
-        onOpenAgent={() => setAgentOpen(true)}
-        todoCount={todoCount}
-        onOpenTodos={() => setTodosOpen(true)}
-      />
+    <div
+      className="chatos-app gary-ui flex h-screen w-screen overflow-hidden bg-[#0b0f17] text-[#e2e8f0] font-sans select-none"
+      data-gary-ui-root
+      data-gary-application-mode="web-ui"
+      data-gary-page-mode="data-page"
+      data-gary-theme="dark"
+      data-gary-material="regular"
+      data-gary-density="balanced"
+      data-gary-background="light-rays"
+      data-gary-light-scope
+    >
+      <div className="gary-scene chatos-scene" data-gary-scene-engine="light-rays" aria-hidden="true" />
 
-      <div className="dash-scroll">
-        {!searching && (
-          <div className="list-filter" style={{ marginBottom: 16 }}>
-            {FILTERS.map((f) => (
-              <button key={f.id} className={`filter-button ${filter === f.id ? 'is-active' : ''}`}
-                style={{ minHeight: 28, padding: '3px 14px', fontSize: 12 }} onClick={() => setFilter(f.id)}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {loadError ? (
-          <div style={{ padding: 48, textAlign: 'center' }}>
-            <div style={{ fontSize: 18, color: 'var(--ink)', marginBottom: 8 }}>加载失败</div>
-            <div style={{ fontSize: 13, color: 'var(--tertiary)', marginBottom: 16 }}>无法获取会话列表</div>
-            <button className="button button--small button--primary" onClick={load}>重试</button>
-          </div>
-        ) : searching ? (
-          <div className="dash-grid">
-            {hits!.map((h) => (
-              <button key={h.key} className={`ch-card ${selectedId === h.conversationId ? 'is-selected' : ''}`} onClick={() => setSelectedId(h.conversationId)}>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)' }}>{h.conversationTitle}</span>
-                  <span style={{ fontSize: 10, color: h.kind === 'semantic' ? 'var(--accent)' : 'var(--quaternary)' }}>
-                    {h.kind === 'semantic' ? `语义 ${Math.round((h.score ?? 0) * 100)}%` : '匹配'}
-                  </span>
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--tertiary)', marginTop: 8 }}>{h.senderName}: {h.snippet.slice(0, 80)}</div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="dash-grid">
-            {visibleProjects.map((p) => (
-              <ProjectCard key={p.projectId} project={p} selected={activeProjectId === p.projectId} onSelect={() => {
-                const conv = previews.find((c) => c.projectId === p.projectId)
-                setSelectedId(conv?.id ?? null)
-              }} />
-            ))}
-            {visiblePreviews.map((c) => (
-              <ConversationCard key={c.id} conv={c} selected={selectedId === c.id} onSelect={() => setSelectedId(c.id)} />
-            ))}
-          </div>
-        )}
+      {/* 1. Left Sidebar (Collapsible, 4 Entry Points) */}
+      <Sidebar onOpenThinking={() => setIsThinkingModalOpen(true)} />
+
+      {/* 2. Central Workspace + Inspector */}
+      <div className="chatos-content flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+        {/* Workspace Header */}
+        <Header onOpenCreateModal={() => setIsCreateModalOpen(true)} />
+
+        {/* Workspace Body: Center Grid/Board + Right Detail Inspector */}
+        <div className="chatos-workspace-body flex-1 flex overflow-hidden relative">
+          {/* Main Central Workspace */}
+          <main className="chatos-main flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-[#0c1018]">
+            {activeWorkspace === 'conversations' && <ConversationsView />}
+            {activeWorkspace === 'todos' && <TodosView />}
+            {activeWorkspace === 'projects' && <ProjectsView />}
+            {activeWorkspace === 'library' && <LibraryView />}
+            {activeWorkspace === 'mindmap' && <MindmapView />}
+          </main>
+
+          {/* 3. Right Detail Panel (Inspector: 2-stage digest + scrollable full reading area) */}
+          {activeWorkspace !== 'mindmap' && <RightDetailPanel />}
+        </div>
       </div>
 
-      {selected && (
-        <>
-          <div className="side-panel__backdrop" onClick={() => setSelectedId(null)} />
-          <aside className="side-panel">
-            <ConversationDetail conv={selected} />
-          </aside>
-        </>
+      {/* Notification Toast */}
+      {toastMessage && (
+        <div
+          id="chatos-toast"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-[#151d2d] border border-[#273854] text-slate-100 text-xs font-medium shadow-2xl flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-3 duration-200"
+        >
+          {toastMessage.includes('⚠️') ? (
+            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          ) : (
+            <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          )}
+          <span>{toastMessage}</span>
+        </div>
       )}
 
-      {todosOpen && (
-        <TodoSidebar onClose={() => setTodosOpen(false)} onJumpConversation={(id) => { setTodosOpen(false); setSelectedId(id) }} />
-      )}
-      {auditOpen && <AuditOverlay onClose={() => setAuditOpen(false)} />}
-      {graphOpen && <GraphOverlay onClose={() => setGraphOpen(false)} />}
-      {agentOpen && <AgentPanel onClose={() => setAgentOpen(false)} />}
+      {/* Modals & Dialogs */}
+      <CommandPalette />
+      <AuxModals />
+      <CreateModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} />
+      <ThinkingCopilotModal isOpen={isThinkingModalOpen} onClose={() => setIsThinkingModalOpen(false)} />
     </div>
-  )
+  );
+};
+
+export function App() {
+  return (
+    <ChatOSProvider>
+      <ChatOSMain />
+    </ChatOSProvider>
+  );
 }
+
+export default App;

@@ -1,0 +1,442 @@
+/*
+ * Gary UI runtime projection.
+ * Machine authority: ./tokens.json
+ * Public CSS entry: this file only.
+ */
+
+:root,
+[data-gary-theme="dark"] {
+  color-scheme: dark;
+  --gary-refraction-plate: rgba(255,255,255,.025);
+  --gary-refraction-edge: rgba(255,255,255,.48);
+  --gary-refraction-inner: rgba(255,255,255,.13);
+  --gary-text-primary: rgba(255, 255, 255, 0.94);
+  --gary-text-secondary: rgba(255, 255, 255, 0.68);
+  --gary-text-tertiary: rgba(255, 255, 255, 0.48);
+  --gary-surface-page: #000000;
+  --gary-surface-sunken: rgba(0, 0, 0, 0.34);
+  --gary-glass-ultrathin: rgba(15, 15, 15, 0.18);
+  --gary-glass-regular: rgba(15, 15, 15, 0.30);
+  --gary-glass-thick: rgba(20, 20, 20, 0.42);
+  --gary-solid-plate: rgba(14, 14, 14, 0.86);
+  --gary-border-highlight: rgba(255, 255, 255, 0.18);
+  --gary-border-shadow: rgba(0, 0, 0, 0.42);
+  --gary-focus-ring: #2e8dff;
+  --gary-state-positive: #30d158;
+  --gary-state-caution: #ffd60a;
+  --gary-state-critical: #ff453a;
+  --gary-shadow-contact: 0 2px 5px rgba(0, 0, 0, 0.46);
+  --gary-shadow-environment: 0 28px 72px rgba(0, 0, 0, 0.38);
+  --gary-shadow-inset: inset 0 1px 1px rgba(255, 255, 255, 0.24), inset 0 -1px 1px rgba(0, 0, 0, 0.30), inset 0 0 30px rgba(255, 255, 255, 0.05);
+  --gary-glass-frost:
+    repeating-radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.04) 0 0.6px, transparent 0.7px 3.6px),
+    repeating-radial-gradient(circle at 78% 64%, rgba(0, 0, 0, 0.018) 0 0.55px, transparent 0.65px 3.2px);
+  --gary-glass-highlight-angle: 135deg;
+  --gary-glass-specular-opacity: 0.18;
+  --gary-glass-sheen-opacity: 0.14;
+  --gary-glass-brightness: 0.80;
+  --gary-glass-contrast: 1.04;
+  --gary-glass-saturate: 108%;
+  --gary-glass-edge-width: 1px;
+  --gary-radius-control: 18px;
+  --gary-radius-card: 30px;
+  --gary-radius-panel: 36px;
+  --gary-radius-pill: 999px;
+  --gary-space-1: 4px;
+  --gary-space-2: 8px;
+  --gary-space-3: 12px;
+  --gary-space-4: 16px;
+  --gary-space-6: 24px;
+  --gary-space-8: 32px;
+  --gary-space-12: 48px;
+  --gary-density-surface-padding: 24px;
+  --gary-density-layout-gap: 8px;
+  --gary-density-section-gap: 32px;
+  --gary-density-control-gap: 8px;
+  --gary-blur-ultrathin: 16px;
+  --gary-blur-regular: 24px;
+  --gary-blur-thick: 32px;
+  --gary-duration-press: 120ms;
+  --gary-duration-fast: 150ms;
+  --gary-duration-base: 250ms;
+  --gary-duration-slow: 350ms;
+  --gary-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --gary-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --gary-press-scale: 0.97;
+  --gary-font-latin: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gary-font-cjk: "Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", sans-serif;
+  --gary-font-sans: "Helvetica Neue", Helvetica, Arial, "Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", sans-serif;
+  --gary-card-opacity: 70%;
+  --gary-card-hierarchy-contrast: 8%;
+  --gary-font-mono: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  --gary-font-size-caption: 0.8125rem;
+  --gary-font-size-label: 0.875rem;
+  --gary-font-size-body: 1rem;
+  --gary-font-size-lead: 1.125rem;
+  --gary-font-size-title: clamp(1.25rem, 2vw, 1.75rem);
+  --gary-font-size-display: clamp(2rem, 6vw, 4.5rem);
+  --gary-font-weight-regular: 400;
+  --gary-font-weight-medium: 600;
+  --gary-font-weight-semibold: 650;
+  --gary-font-weight-bold: 720;
+  --gary-font-weight-medium-light: 500;
+  --gary-font-weight-extra-semibold: 620;
+  --gary-font-weight-semibold-strong: 660;
+  --gary-font-weight-semibold-extra: 670;
+  --gary-font-weight-bold-light: 680;
+  --gary-font-weight-bold-strong: 700;
+  --gary-font-weight-heavy: 740;
+  --gary-font-weight-black: 760;
+  --gary-font-weight-extra-black: 790;
+  --gary-line-height-tight: 1.1;
+  --gary-line-height-body: 1.68;
+  --gary-tracking-display: -0.025em;
+  --gary-tracking-title: -0.015em;
+  --gary-tracking-label: 0.01em;
+  --gary-tracking-caption: 0.012em;
+  --gary-tracking-metric: -0.03em;
+  --gary-control-height: 44px;
+  --gary-scene-mask: rgba(0, 0, 0, 0);
+  --gary-scene-image: none;
+  --gary-scene-dot-color: rgba(255, 255, 255, 0.16);
+  --gary-scene-dot-active: rgba(255, 255, 255, 0.72);
+  --gary-scene-grid-size: 28px;
+  --gary-card-plate:rgba(32,32,32,.52);
+  --gary-card-edge:rgba(255,255,255,.14);
+  --gary-card-shine:rgba(255,255,255,.12);
+  --gary-card-orbit:rgba(255,255,255,.70);
+  --gary-scene-pointer-radius: 160px;
+  --gary-scene-position: center center;
+  --gary-scene-size: cover;
+}
+
+[data-gary-theme="light"] {
+  color-scheme: light;
+  --gary-refraction-plate: rgba(255,255,255,.08);
+  --gary-refraction-edge: rgba(255,255,255,.94);
+  --gary-refraction-inner: rgba(0,0,0,.10);
+  --gary-text-primary: rgba(34, 30, 27, 0.94);
+  --gary-text-secondary: rgba(34, 30, 27, 0.64);
+  --gary-text-tertiary: rgba(34, 30, 27, 0.46);
+  --gary-surface-page: #ffffff;
+  --gary-surface-sunken: rgba(74, 64, 54, 0.08);
+  --gary-glass-ultrathin: rgba(255, 252, 246, 0.22);
+  --gary-glass-regular: rgba(255, 252, 246, 0.34);
+  --gary-glass-thick: rgba(255, 252, 246, 0.48);
+  --gary-solid-plate: rgba(246, 242, 235, 0.88);
+  --gary-border-highlight: rgba(255, 255, 255, 0.74);
+  --gary-border-shadow: rgba(77, 67, 58, 0.16);
+  --gary-focus-ring: #007aff;
+  --gary-state-positive: #248a3d;
+  --gary-state-caution: #9a6700;
+  --gary-state-critical: #d70015;
+  --gary-shadow-contact: 0 2px 5px rgba(0, 0, 0, 0.14);
+  --gary-shadow-environment: 0 28px 72px rgba(0, 0, 0, 0.14);
+  --gary-shadow-inset: inset 0 1px 1px rgba(255, 255, 255, 0.44), inset 0 -1px 1px rgba(77, 67, 58, 0.10), inset 0 0 28px rgba(255, 255, 255, 0.08);
+  --gary-glass-specular-opacity: 0.22;
+  --gary-glass-sheen-opacity: 0.18;
+  --gary-glass-brightness: 1.03;
+  --gary-glass-contrast: 1.03;
+  --gary-glass-saturate: 106%;
+  --gary-scene-mask: rgba(255, 255, 255, 0);
+  --gary-scene-dot-color: rgba(0, 0, 0, 0.14);
+  --gary-scene-dot-active: rgba(0, 0, 0, 0.58);
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  [data-gary-theme="dark"] {
+    --gary-text-secondary: rgba(255, 255, 255, 0.84);
+    --gary-text-tertiary: rgba(255, 255, 255, 0.68);
+    --gary-border-highlight: rgba(255, 255, 255, 0.48);
+  }
+
+  [data-gary-theme="light"] {
+    --gary-text-secondary: rgba(34, 30, 27, 0.82);
+    --gary-text-tertiary: rgba(34, 30, 27, 0.66);
+    --gary-border-shadow: rgba(34, 30, 27, 0.48);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  [data-gary-theme="dark"] {
+    --gary-glass-ultrathin: rgba(14, 14, 14, 0.94);
+    --gary-glass-regular: rgba(14, 14, 14, 0.96);
+    --gary-glass-thick: rgba(14, 14, 14, 0.98);
+  }
+
+  [data-gary-theme="light"] {
+    --gary-glass-ultrathin: rgba(250, 248, 244, 0.94);
+    --gary-glass-regular: rgba(250, 248, 244, 0.96);
+    --gary-glass-thick: rgba(250, 248, 244, 0.98);
+  }
+}
+
+[data-gary-density="spacious"] {
+  --gary-density-surface-padding: 32px;
+  --gary-density-layout-gap: 28px;
+  --gary-density-section-gap: 48px;
+  --gary-density-control-gap: 12px;
+}
+
+[data-gary-density="compact"] {
+  --gary-density-surface-padding: 18px;
+  --gary-density-layout-gap: 12px;
+  --gary-density-section-gap: 24px;
+  --gary-density-control-gap: 6px;
+}
+
+:where(.gary-ui, .gary-ui *),
+:where([data-gary-ui], [data-gary-ui] *) {
+  box-sizing: border-box;
+}
+
+:where(.gary-ui, [data-gary-ui]) {
+  min-width: 0;
+  color: var(--gary-text-primary);
+  font-family: var(--gary-font-sans);
+  font-feature-settings: "tnum" 1, "ss01" 1;
+  font-optical-sizing: auto;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  letter-spacing: 0;
+  line-height: var(--gary-line-height-body);
+}
+
+/* Executable semantic roles shared by plain HTML and React adapters. */
+.gary-role-title { margin: 0 0 var(--gary-space-6); max-width: none; font-size: min(clamp(1.75rem, 5vw, 4.5rem), 7vw); font-weight: var(--gary-font-weight-bold); line-height: 1.08; letter-spacing: var(--gary-tracking-display); white-space: nowrap; text-wrap: nowrap; word-break: keep-all; overflow-wrap: normal; }
+.gary-role-section-title { margin: 0 0 var(--gary-space-4); font-size: clamp(1.25rem, 2vw, 1.75rem); font-weight: var(--gary-font-weight-semibold); line-height: 1.28; letter-spacing: var(--gary-tracking-title); text-wrap: balance; }
+.gary-role-body { margin: 0 0 1em; max-width: 72ch; font-size: 1rem; font-weight: var(--gary-font-weight-regular); line-height: 1.68; word-break: normal; overflow-wrap: break-word; text-wrap: pretty; }
+.gary-role-label { margin: 0 0 var(--gary-space-2); font-size: .875rem; font-weight: var(--gary-font-weight-medium); line-height: 1.4; letter-spacing: var(--gary-tracking-label); }
+.gary-role-annotation { margin: var(--gary-space-2) 0 0; color: var(--gary-text-secondary); font-size: .8125rem; font-weight: var(--gary-font-weight-regular); line-height: 1.55; letter-spacing: var(--gary-tracking-caption); overflow-wrap: anywhere; }
+.gary-role-metric { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .35em; margin: var(--gary-space-2) 0; font-size: clamp(1.75rem, 4vw, 3.5rem); font-weight: var(--gary-font-weight-bold); font-variant-numeric: tabular-nums; line-height: 1; letter-spacing: var(--gary-tracking-metric); }
+.gary-role-metric small { font-size: .36em; font-weight: var(--gary-font-weight-medium); }
+.gary-rich-text { font-family: var(--gary-font-sans); font-synthesis: weight; }
+[data-gary-font-weight="100"] { font-weight: 100; }
+[data-gary-font-weight="300"] { font-weight: 300; }
+[data-gary-font-weight="400"] { font-weight: 400; }
+[data-gary-font-weight="500"] { font-weight: 500; }
+[data-gary-font-weight="600"] { font-weight: 600; }
+[data-gary-font-weight="700"] { font-weight: 700; }
+[data-gary-font-weight="800"] { font-weight: 800; }
+[data-gary-font-weight="900"] { font-weight: 900; }
+
+[data-gary-card] { min-width: 0; border-radius: var(--gary-radius-card); }
+[data-gary-card="metric"] { display: grid; align-content: space-between; min-height: 180px; padding: 24px; }
+[data-gary-card="comparison"] { display: grid; grid-template-columns: minmax(9rem, .75fr) repeat(2, minmax(12rem, 1fr)); gap: 1px; overflow-x: auto; }
+[data-gary-card="judgement"] { display: grid; gap: 12px; padding: 28px; border-left: 4px solid var(--gary-focus-ring); }
+[data-gary-card="media"] { display: grid; grid-template-rows: minmax(200px, 1fr) auto; overflow: hidden; }
+[data-gary-card="media"] :where(img, iframe, svg) { width: 100%; min-height: 200px; object-fit: cover; }
+[data-gary-scene="reading"] { --gary-density-layout-gap: 24px; --gary-density-section-gap: 48px; }
+[data-gary-scene="analysis"] { --gary-density-layout-gap: 16px; --gary-density-section-gap: 32px; }
+[data-gary-scene="showcase"] { --gary-density-layout-gap: 28px; --gary-density-section-gap: 56px; }
+
+[data-gary-scene-engine="dot-grid"] {
+  background-color: var(--gary-surface-page);
+  background-image: radial-gradient(circle, var(--gary-scene-dot-color) 0 1px, transparent 1.2px);
+  background-position: center;
+  background-repeat: repeat;
+  background-size: var(--gary-scene-grid-size) var(--gary-scene-grid-size);
+}
+
+[data-gary-scene-engine="dot-grid"] {
+  overflow: hidden;
+}
+
+[data-gary-scene-engine="dot-grid"] > .gary-dot-grid-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+[data-gary-scene-engine="dot-grid"][data-scene-status="ready"],
+[data-gary-scene-engine="dot-grid"][data-scene-status="reduced-motion"] {
+  background-image: none;
+}
+
+@media (max-width: 640px) {
+  [data-gary-card="comparison"] { grid-template-columns: minmax(9rem, .75fr) minmax(12rem, 1fr); }
+  .gary-role-title { font-size: min(1.75rem, 6vw); }
+}
+
+:where(
+  .gary-glass,
+  .gary-button,
+  .gary-segmented,
+  .gary-field,
+  .gary-tab-bar,
+  .gary-web-bar,
+  .gary-glass-card,
+  .gary-metric-card,
+  .gary-comparison-table,
+  .gary-media-card,
+  .gary-profile-card
+) {
+  --gary-glass-fill: var(--gary-glass-regular);
+  --gary-glass-blur: var(--gary-blur-regular);
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--gary-text-primary);
+  background:
+    var(--gary-glass-frost),
+    linear-gradient(var(--gary-glass-highlight-angle), rgba(255, 255, 255, 0.10), transparent 44%, rgba(0, 0, 0, 0.035) 74%, rgba(255, 255, 255, 0.04)),
+    var(--gary-glass-fill);
+  background-blend-mode: overlay, normal, normal;
+  border: 1px solid;
+  border-color:
+    var(--gary-border-highlight)
+    var(--gary-border-shadow)
+    var(--gary-border-shadow)
+    var(--gary-border-highlight);
+  box-shadow:
+    var(--gary-shadow-inset),
+    var(--gary-shadow-contact),
+    var(--gary-shadow-environment);
+  -webkit-backdrop-filter:
+    blur(var(--gary-glass-blur)) saturate(var(--gary-glass-saturate))
+    brightness(var(--gary-glass-brightness)) contrast(var(--gary-glass-contrast));
+  backdrop-filter:
+    blur(var(--gary-glass-blur)) saturate(var(--gary-glass-saturate))
+    brightness(var(--gary-glass-brightness)) contrast(var(--gary-glass-contrast));
+}
+
+:where(
+  .gary-glass,
+  .gary-button,
+  .gary-segmented,
+  .gary-field,
+  .gary-tab-bar,
+  .gary-web-bar,
+  .gary-glass-card,
+  .gary-metric-card,
+  .gary-comparison-table,
+  .gary-media-card,
+  .gary-profile-card
+)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: var(--gary-glass-edge-width);
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      var(--gary-glass-highlight-angle),
+      rgba(255, 255, 255, 0.18) 0%,
+      rgba(255, 255, 255, 0.04) 24%,
+      rgba(0, 0, 0, 0.04) 54%,
+      rgba(0, 0, 0, 0.08) 100%
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  mix-blend-mode: screen;
+  opacity: var(--gary-glass-specular-opacity);
+}
+
+:where(
+  .gary-glass,
+  .gary-button,
+  .gary-segmented,
+  .gary-field,
+  .gary-tab-bar,
+  .gary-web-bar,
+  .gary-glass-card,
+  .gary-metric-card,
+  .gary-comparison-table,
+  .gary-media-card,
+  .gary-profile-card
+)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(221deg, transparent 0%, rgba(255, 255, 255, 0.04) 46%, rgba(0, 0, 0, 0.06) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 48%, rgba(0, 0, 0, 0.08));
+  mix-blend-mode: screen;
+  opacity: var(--gary-glass-sheen-opacity);
+}
+
+.gary-ultrathin {
+  --gary-glass-fill: var(--gary-glass-ultrathin);
+  --gary-glass-blur: var(--gary-blur-ultrathin);
+}
+
+.gary-regular {
+  --gary-glass-fill: var(--gary-glass-regular);
+  --gary-glass-blur: var(--gary-blur-regular);
+}
+
+.gary-thick {
+  --gary-glass-fill: var(--gary-glass-thick);
+  --gary-glass-blur: var(--gary-blur-thick);
+}
+
+.gary-solid-plate {
+  min-width: 0;
+  color: var(--gary-text-primary);
+  background: var(--gary-solid-plate);
+  border: 1px solid var(--gary-border-shadow);
+  box-shadow: var(--gary-shadow-inset), var(--gary-shadow-contact);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .gary-glass,
+  .gary-button,
+  .gary-segmented,
+  .gary-field,
+  .gary-tab-bar,
+  .gary-web-bar,
+  .gary-glass-card,
+  .gary-metric-card,
+  .gary-comparison-table,
+  .gary-media-card,
+  .gary-profile-card {
+    background-color: var(--gary-solid-plate);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.gary-ui, .gary-ui *),
+  :where([data-gary-ui], [data-gary-ui] *) {
+    scroll-behavior: auto !important;
+    animation: none !important;
+  }
+}
+
+/* Explicit local faces prevent similarly named display fonts and platform CJK substitution.
+   No font files are redistributed. Helvetica/YaHei remain subject to the host's license. */
+@font-face { font-family:"Helvetica Neue"; src:local("Helvetica Light"); font-weight:300; font-style:normal; font-display:swap; unicode-range:U+0000-024F,U+1E00-1EFF; }
+@font-face { font-family:"Helvetica Neue"; src:local("Helvetica"),local("Helvetica Neue"); font-weight:400; font-style:normal; font-display:swap; unicode-range:U+0000-024F,U+1E00-1EFF; }
+@font-face { font-family:"Helvetica Neue"; src:local("Helvetica-Bold"),local("Helvetica Bold"),local("Helvetica Neue Bold"); font-weight:700; font-style:normal; font-display:swap; unicode-range:U+0000-024F,U+1E00-1EFF; }
+@font-face { font-family:"Microsoft YaHei UI"; src:local("Microsoft YaHei Light"); font-weight:300; font-style:normal; font-display:swap; }
+@font-face { font-family:"Microsoft YaHei UI"; src:local("Microsoft YaHei"); font-weight:400; font-style:normal; font-display:swap; }
+@font-face { font-family:"Microsoft YaHei UI"; src:local("Microsoft YaHei Bold"); font-weight:700; font-style:normal; font-display:swap; }
+html body,html button,html input,html select,html textarea,html summary { font-family:var(--gary-font-sans); }
+button,summary { text-align:center; }
+button svg,summary svg,[data-icon],.gary-brand-icon { display:block; flex-shrink:0; }
+[data-icon] { display:inline-flex; align-items:center; justify-content:center; line-height:0; }
+.gary-rich-text { font-weight:var(--gary-rich-text-weight,400); }
+[data-gary-font-weight="200"] { font-weight:200; }
+[data-gary-theme="light"] { --gary-card-plate:rgba(245,245,245,.60); --gary-card-edge:rgba(0,0,0,.10); --gary-card-shine:rgba(255,255,255,.85); --gary-card-orbit:rgba(70,70,70,.45); }
+
+/* Quiet action colors from the approved complete Demo. */
+:root { --gary-action-fill: #19191c; --gary-action-border: #ffffff16; }
+[data-gary-theme="light"] { --gary-action-fill: #fff; --gary-action-border: #00000014; }

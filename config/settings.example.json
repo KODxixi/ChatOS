@@ -1,5 +1,5 @@
 {
-  "_comment": "复制为 settings.json 并填入实际值。settings.json 被 gitignore。",
+  "_comment": "历史配置示例，不是运行配置。正式模板见 apps/gateway/config/settings.example.json；复制到其同目录 settings.json。",
   "db_dir": "D:\\path\\to\\wechat\\db_storage",
   "activityFilterEnabled": true,
   "activityFilterInactiveDays": 30,

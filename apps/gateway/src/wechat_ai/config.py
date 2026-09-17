@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,9 @@ class Settings:
     rerank_enabled: bool = True
     activity_filter_enabled: bool = True
     activity_filter_inactive_days: int = 30
+    frontend_url: str | None = None
+    config_path: Path | None = None
+    config_identity: str | None = None
 
     @property
     def asset_dir(self) -> Path:
@@ -61,6 +65,9 @@ def load_settings(
         ),
         output_dir=resolve_project_path(root, raw.get("outputDir", "output")),
         web_dist=resolve_project_path(root, raw.get("webDist", "web/dist")),
+        frontend_url=raw.get("frontendUrl"),
+        config_path=path.resolve(),
+        config_identity=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
         lm_base_url=str(
             lm_studio.get("baseUrl", "http://127.0.0.1:1234/v1")
         ).rstrip("/"),

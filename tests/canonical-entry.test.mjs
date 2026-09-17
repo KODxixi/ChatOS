@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import http from 'node:http';
+import net from 'node:net';
+
+const modulePath = new URL('../scripts/entry-contract.mjs', import.meta.url);
+
+test('canonical source, build and occupied-port contract', async t => {
+  assert.ok(fs.existsSync(modulePath), 'canonical identity implementation must exist');
+  const c = await import(modulePath.href);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-entry-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const put = (name, value) => {
+    fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+    fs.writeFileSync(path.join(root, name), value);
+  };
+  for (const name of c.SOURCE_INPUTS) {
+    if (name.endsWith('/')) put(`${name}fixture.ts`, 'source');
+    else put(name, name.endsWith('.json') ? '{}' : 'source');
+  }
+  put('apps/chatos-console/src/App.tsx', 'version one');
+  put('apps/gateway/config/settings.json', JSON.stringify({ libraryDb: 'data/test.sqlite', frontendUrl: c.UI_URL }));
+  put('apps/chatos-console/dist/index.html', '<div id="root"></div>');
+  put('apps/chatos-console/dist/server.cjs', 'server version one');
+  execFileSync('git', ['init', '-q', root]);
+  const stage = () => execFileSync('git', ['-C', root, 'add', '.']);
+  stage();
+  const first = c.sourceIdentity(root);
+  assert.equal(first.sourceRelative, 'apps/chatos-console');
+  assert.equal(first.originCommit, 'e9d78e9c3f1c216c668a4810fe890d764131b88a');
+  assert.equal(first.buildId, c.sourceIdentity(root).buildId, 'time must not change identity');
+  const stamp = () => {
+    const build = { ...c.sourceIdentity(root), outputHash: c.outputIdentity(path.join(root, 'apps/chatos-console/dist')) };
+    put('apps/chatos-console/dist/build.json', JSON.stringify(build));
+    return build;
+  };
+  let build = stamp();
+  assert.equal(c.verifyBuild(root).buildId, build.buildId, 'staged source works before first commit');
+  put('apps/chatos-console/src/App.tsx', 'version two');
+  assert.notEqual(first.buildId, c.sourceIdentity(root).buildId);
+  assert.throws(() => c.verifyBuild(root), /stale|fresh/i);
+  build = stamp();
+  put('apps/chatos-console/dist/server.cjs', 'tampered server');
+  assert.throws(() => c.verifyBuild(root), /output/i);
+  build = stamp();
+  put('apps/chatos-console/src/untracked.ts', 'new runtime code');
+  stamp();
+  assert.throws(() => c.verifyBuild(root), /track/i);
+  stage();
+  build = stamp();
+  assert.equal(c.verifyBuild(root).buildId, build.buildId);
+  const db = c.resolveLibraryDb(root);
+  assert.equal(db, path.join(root, 'apps/gateway/data/test.sqlite'));
+  const startup = c.captureUiRuntime(root, build, path.join(root, 'apps/chatos-console/dist/server.cjs'));
+  c.assertRuntime(startup, startup);
+  put('apps/chatos-console/dist/server.cjs', 'server version three');
+  const next = stamp();
+  const expected = c.captureUiRuntime(root, next, path.join(root, 'apps/chatos-console/dist/server.cjs'));
+  assert.throws(() => c.assertRuntime(startup, expected), /identity|stale/i);
+  assert.equal(startup.buildId, build.buildId, 'startup identity must not follow a replaced manifest');
+  put('apps/gateway/config/settings.json', JSON.stringify({ libraryDb: 'data/other.sqlite', frontendUrl: c.UI_URL }));
+  assert.throws(() => c.assertRuntime(expected, c.captureUiRuntime(root, next, path.join(root, 'apps/chatos-console/dist/server.cjs'))), /identity|stale/i);
+
+  let payload = {};
+  const server = http.createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(payload));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  await assert.rejects(c.inspectService(url, expected), /occupied|identity/i);
+  payload = startup;
+  await assert.rejects(c.inspectService(url, expected), /occupied|stale|identity/i);
+  payload = expected;
+  assert.equal(await c.inspectService(url, expected), 'reuse');
+  await new Promise(resolve => server.close(resolve));
+  assert.equal(await c.inspectService(url, expected), 'absent');
+  const sockets = new Set();
+  const silent = net.createServer(socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  await new Promise(resolve => silent.listen(0, '127.0.0.1', resolve));
+  t.after(() => { for (const socket of sockets) socket.destroy(); silent.close(); });
+  await assert.rejects(c.inspectService(`http://127.0.0.1:${silent.address().port}`, expected), /occupied/i);
+});

@@ -119,11 +119,11 @@ wechat_ai/
 
 ## 配置管理
 
-两级配置，都是本地文件、不入库：
+运行配置为本地文件、不入库（同目录 `settings.example.json` 为可入库模板）：
 
 - `apps/gateway/config/settings.json`（`config.py`）：`libraryDb`、`webDist`、
   `lmStudio.baseUrl`、`llamaSwap.retrievalBaseUrl`、`rerankEnabled`、
-  `activityFilterEnabled` / `activityFilterInactiveDays`。
+  `activityFilterEnabled` / `activityFilterInactiveDays`；正式配置含 `frontendUrl`，网页跳至正式 UI。
 - `apps/gateway/config.json`：`{"db_dir": "<微信 db_storage 路径>"}`，媒体根由此推导。
 - LLM 相关走环境变量（见上表），模板见仓库根 `.env.example`。
 
@@ -143,7 +143,8 @@ wechat_ai/
 
 ```powershell
 cd C:\ChatOS\apps\gateway
-.venv\Scripts\chatbox.exe serve --port 8912 --no-browser
-# 日志：仓库根 _srv_out.log / _srv_err.log
+# 单独开发网关；正式 UI+网关统一使用根 scripts/start_chatos.bat
+.venv\Scripts\python.exe -m wechat_ai serve --port 8912 --no-browser
+# 正式日志：var/logs/gateway.stdout.log 和 gateway.stderr.log
 .venv\Scripts\python -m pytest -q
 ```

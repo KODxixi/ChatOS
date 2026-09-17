@@ -1,0 +1,6 @@
+{
+  "name": "ChatOS",
+  "description": "围绕关系与行动重做前端智能工作台，提供会话、待办、项目、资料库与思维图谱双链演化网络及自动整理。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

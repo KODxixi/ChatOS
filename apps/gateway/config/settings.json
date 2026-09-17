@@ -1,7 +1,0 @@
-{
-  "rerankEnabled": false,
-  "activityFilterEnabled": true,
-  "activityFilterInactiveDays": 30,
-  "libraryDb": "D:\\ChatOS-Vault\\library\\wechat-ai.sqlite",
-  "webDist": "C:\\ChatOS\\apps\\chatos-console\\dist"
-}

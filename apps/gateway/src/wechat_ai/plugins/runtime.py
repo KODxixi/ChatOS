@@ -10,5 +10,7 @@ def apply(ctx) -> None:
     dist = (ctx.override("web_dist") or settings.web_dist).resolve()
     ctx.add_router(
         "/api",
-        create_runtime_router(ctx.get("db.connection_factory"), web_dist=dist),
+        create_runtime_router(ctx.get("db.connection_factory"), web_dist=dist,
+                              library_db=settings.library_db, frontend_url=settings.frontend_url,
+                              config_path=settings.config_path, config_identity=settings.config_identity),
     )

@@ -17,6 +17,7 @@ dist/
 
 # Local configuration and sensitive state
 config/*.json
+apps/gateway/config/settings.json
 !config/*.example.json
 config.json
 .env
