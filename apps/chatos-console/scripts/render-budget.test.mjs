@@ -92,6 +92,7 @@ test('failed images use one local fallback without a retry loop or false origina
 
 test('conversation workspace defaults to daily focus and keeps an explicit path to every conversation', () => {
   const source = readFileSync(new URL('../src/components/views/ConversationsView.tsx', import.meta.url), 'utf8');
+  const sidebar = readFileSync(new URL('../src/components/Sidebar.tsx', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
   assert.match(source, /useState<['"]focus['"]\s*\|\s*['"]all['"]>\(['"]focus['"]\)/);
   assert.match(source, /selectDailyFocusConversations\(conversations/);
@@ -105,4 +106,5 @@ test('conversation workspace defaults to daily focus and keeps an explicit path 
   assert.match(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*0;/s);
   assert.doesNotMatch(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*56rem;/s);
   assert.match(css, /\.conversation-type-tabs\.gary-segmented\s*>\s*button[^}]*min-height:\s*var\(--gary-control-height\)/s);
+  assert.match(sidebar, /useState<boolean>\(false\)/);
 });

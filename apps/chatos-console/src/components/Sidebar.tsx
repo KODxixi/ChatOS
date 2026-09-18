@@ -47,7 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenThinking }) => {
     markConversationAsRead,
   } = useChatOS();
 
-  const [isStarredOpen, setIsStarredOpen] = useState<boolean>(true);
+  const [isStarredOpen, setIsStarredOpen] = useState<boolean>(false);
   const starredConversations = conversations.filter(c => c.isFollowed);
 
   const unreadMessagesCount = conversations.reduce((acc, c) => acc + c.unreadCount, 0);
