@@ -321,6 +321,10 @@ select:focus-visible,
   min-height: var(--gary-control-height);
 }
 
+.conversation-type-tabs.gary-segmented > button {
+  min-height: var(--gary-control-height);
+}
+
 .conversation-search-module > button,
 .conversation-card-surface button {
   min-width: var(--gary-control-height);

@@ -104,4 +104,5 @@ test('conversation workspace defaults to daily focus and keeps an explicit path 
   assert.match(source, /onKeyDown=/);
   assert.match(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*0;/s);
   assert.doesNotMatch(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*56rem;/s);
+  assert.match(css, /\.conversation-type-tabs\.gary-segmented\s*>\s*button[^}]*min-height:\s*var\(--gary-control-height\)/s);
 });
