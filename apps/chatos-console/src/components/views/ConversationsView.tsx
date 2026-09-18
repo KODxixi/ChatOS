@@ -29,6 +29,8 @@ import { useChatOS } from '../../context/ChatOSContext';
 import { Conversation } from '../../types';
 import {
   buildConversationFeatureFilters,
+  getConversationAttentionReason,
+  selectDailyFocusConversations,
   selectConversationAlerts,
   type ConversationFeatureFilterId,
   type ConversationFeatureIcon,
@@ -64,6 +66,8 @@ export const ConversationsView: React.FC = () => {
     conversationTotal,
   } = useChatOS();
 
+  const [workspaceMode, setWorkspaceMode] = useState<'focus' | 'all'>('focus');
+
   // Tab 1: Chat type filter (User request: 选项卡或下拉菜单筛选仅私信和仅群聊)
   const [chatTypeFilter, setChatTypeFilter] = useState<'all' | 'private' | 'group'>('all');
 
@@ -87,13 +91,17 @@ export const ConversationsView: React.FC = () => {
   // Reset limit when filters change
   React.useEffect(() => {
     setVisibleLimit(60);
-  }, [chatTypeFilter, activeFilter, searchKeywords]);
+  }, [workspaceMode, chatTypeFilter, activeFilter, searchKeywords]);
 
   // Counts for tabs
   const totalCount = conversations.length;
   const privateCount = useMemo(() => conversations.filter(c => !c.isGroup).length, [conversations]);
   const groupCount = useMemo(() => conversations.filter(c => c.isGroup).length, [conversations]);
   const featureFilters = useMemo(() => buildConversationFeatureFilters(conversations), [conversations]);
+  const dailyFocusConversations = useMemo(
+    () => conversationDataSource === 'loading' ? [] : selectDailyFocusConversations(conversations),
+    [conversationDataSource, conversations]
+  );
   const alertConversations = useMemo(() => selectConversationAlerts(conversations), [conversations]);
   const selectedFeature = featureFilters.find(filter => filter.id === activeFilter) || featureFilters[0];
 
@@ -107,16 +115,18 @@ export const ConversationsView: React.FC = () => {
   const sortedConversations = useMemo(() => {
     return [...conversations].sort((a, b) => b.priorityScore - a.priorityScore);
   }, [conversations]);
+  const displayedConversations = workspaceMode === 'focus' ? dailyFocusConversations : sortedConversations;
+  const effectiveDensity = workspaceMode === 'focus' ? 'standard' : cardDensity;
 
   // Filter conversations
   const filteredConversations = useMemo(() => {
-    return sortedConversations.filter(c => {
+    return displayedConversations.filter(c => {
       // 1. Chat type tab filter
       if (chatTypeFilter === 'private' && c.isGroup) return false;
       if (chatTypeFilter === 'group' && !c.isGroup) return false;
 
       // 2. Modifier filter
-      if (selectedFeature && !selectedFeature.matches(c)) return false;
+      if (workspaceMode === 'all' && selectedFeature && !selectedFeature.matches(c)) return false;
 
       // 3. Search query
       if (searchKeywords.trim()) {
@@ -133,7 +143,7 @@ export const ConversationsView: React.FC = () => {
 
       return true;
     });
-  }, [sortedConversations, chatTypeFilter, selectedFeature, searchKeywords]);
+  }, [displayedConversations, workspaceMode, chatTypeFilter, selectedFeature, searchKeywords]);
 
   // Sliced conversations for smooth rendering
   const visibleConversations = useMemo(() => {
@@ -149,40 +159,31 @@ export const ConversationsView: React.FC = () => {
     markConversationAsRead(conv.id);
   };
 
+  const handleCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, conv: Conversation) => {
+    if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    handleSelect(conv);
+  };
+
   /**
    * Helper: Render Avatar based on conversation type (Single avatar for 1v1, Stacked avatars for Groups)
    */
   const renderCardAvatar = (conv: Conversation, density: 'compact' | 'standard' | 'comfortable') => {
     if (!conv.isGroup) {
-      // 私信卡片：单人圆形头像，带有翡翠绿光圈和在线状态点
+      // 私信卡片：单头像；不使用数据库不存在的在线状态。
       const sizeClasses = {
         compact: 'w-8 h-8',
         standard: 'w-10 h-10',
         comfortable: 'w-12 h-12',
       }[density];
 
-      const dotSize = {
-        compact: 'w-2 h-2',
-        standard: 'w-2.5 h-2.5',
-        comfortable: 'w-3 h-3',
-      }[density];
-
       return (
-        <div className="relative flex-shrink-0">
+        <div className="flex-shrink-0">
           <img
             src={conv.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=60'}
             alt={conv.name}
             className={`${sizeClasses} rounded-full object-cover ring-2 ring-emerald-500/50 shadow-sm`}
           />
-          <span
-            className={`absolute bottom-0 right-0 ${dotSize} rounded-full bg-emerald-500 ring-2 ring-[#0b131e]`}
-            title="私信联系人在线"
-          />
-          {conv.isFollowed && (
-            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-amber-500 flex items-center justify-center text-[8px] text-slate-950 font-bold shadow-sm ring-1 ring-[#0b131e]">
-              ★
-            </span>
-          )}
         </div>
       );
     }
@@ -210,7 +211,7 @@ export const ConversationsView: React.FC = () => {
     }[density];
 
     return (
-      <div className="relative flex items-center flex-shrink-0">
+      <div className="flex items-center flex-shrink-0">
         <div className={`flex items-center ${spacing}`}>
           {participants.length > 0 ? (
             participants.slice(0, 2).map((p, idx) => (
@@ -235,11 +236,6 @@ export const ConversationsView: React.FC = () => {
             +{Math.max(1, memberCount - Math.min(2, participants.length))}
           </div>
         </div>
-        {conv.isFollowed && (
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-amber-500 flex items-center justify-center text-[8px] text-slate-950 font-bold shadow-sm ring-1 ring-[#131728] z-20">
-            ★
-          </span>
-        )}
       </div>
     );
   };
@@ -291,61 +287,55 @@ export const ConversationsView: React.FC = () => {
     <div className="conversation-view flex-1 flex flex-col overflow-y-auto p-6 pt-4 space-y-4">
       {/* Top Controls Toolbar: Type Tabs, Dropdown Filter Menu, Search, and 3-Level Density Switcher */}
       {toolbarHost && createPortal(
-      <div className="conversation-toolbar">
-        {/* Left: Chat Type Primary Tabs & Quick Dropdown Filter Menu */}
+      <div className="conversation-toolbar" data-mode={workspaceMode}>
+        {/* Left: Daily focus by default; all conversations remain one click away. */}
         <div className="conversation-control-module conversation-type-module">
-          {/* Primary Tabs (全部会话 / 仅私信 1v1 / 仅群聊) */}
-          <div className="conversation-type-tabs gary-segmented flex items-center gap-1" role="group" aria-label="会话类型">
+          <div className="conversation-type-tabs gary-segmented flex items-center gap-1" role="group" aria-label="会话视图">
             <button
-              id="tab-chat-all"
-              onClick={() => setChatTypeFilter('all')}
-              aria-pressed={chatTypeFilter === 'all'}
+              id="conversation-mode-focus"
+              onClick={() => {
+                setWorkspaceMode('focus');
+                setActiveFilter('all');
+              }}
+              aria-pressed={workspaceMode === 'focus'}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                chatTypeFilter === 'all'
+                workspaceMode === 'focus'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#151c2c]'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>今日关注</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/30 text-indigo-200 font-semibold">
+                {dailyFocusConversations.length}
+              </span>
+            </button>
+
+            <button
+              id="conversation-mode-all"
+              onClick={() => setWorkspaceMode('all')}
+              aria-pressed={workspaceMode === 'all'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                workspaceMode === 'all'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-[#151c2c]'
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
               <span>全部会话</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/30 text-indigo-200 font-semibold">
-                {totalCount}
-              </span>
             </button>
 
-            <button
-              id="tab-chat-private"
-              onClick={() => setChatTypeFilter('private')}
-              aria-pressed={chatTypeFilter === 'private'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                chatTypeFilter === 'private'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#151c2c]'
-              }`}
+            {workspaceMode === 'all' && <select
+              id="conversation-type-filter"
+              value={chatTypeFilter}
+              onChange={event => setChatTypeFilter(event.target.value as 'all' | 'private' | 'group')}
+              aria-label="会话类型"
+              className="min-h-11 min-w-24 rounded-md border border-white/10 bg-black/20 px-2 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
-              <User className="w-3.5 h-3.5" />
-              <span>仅私信 (1v1)</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/30 text-emerald-200 font-semibold">
-                {privateCount}
-              </span>
-            </button>
-
-            <button
-              id="tab-chat-group"
-              onClick={() => setChatTypeFilter('group')}
-              aria-pressed={chatTypeFilter === 'group'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                chatTypeFilter === 'group'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-[#151c2c]'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>仅群聊</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/30 text-indigo-200 font-semibold">
-                {groupCount}
-              </span>
-            </button>
+              <option value="all">全部类型 · {totalCount}</option>
+              <option value="private">一对一 · {privateCount}</option>
+              <option value="group">多人 · {groupCount}</option>
+            </select>}
           </div>
         </div>
 
@@ -356,7 +346,10 @@ export const ConversationsView: React.FC = () => {
             id="conv-search-input"
             type="text"
             value={searchKeywords}
-            onChange={e => setSearchKeywords(e.target.value)}
+            onChange={e => {
+              setSearchKeywords(e.target.value);
+              if (e.target.value) setWorkspaceMode('all');
+            }}
             placeholder="在千人关系网中搜索联系人、群聊话题、职位或摘要..."
             aria-label="搜索会话"
             className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-[#0b0f17] border border-[#212c40] text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
@@ -371,8 +364,9 @@ export const ConversationsView: React.FC = () => {
           )}
         </div>
 
-        {/* Right: Card Display Density Switcher (紧凑 / 标准 / 舒适) */}
-        <div className="conversation-control-module conversation-density-module">
+        {/* Density is an advanced all-conversations control, not daily-work chrome. */}
+        {workspaceMode === 'all' && (
+          <div className="conversation-control-module conversation-density-module">
           <span className="text-[11px] text-slate-400 font-medium hidden sm:inline flex items-center gap-1">
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
             <span>显示层级:</span>
@@ -423,12 +417,13 @@ export const ConversationsView: React.FC = () => {
               <span>舒适</span>
             </button>
           </div>
-        </div>
+          </div>
+        )}
       </div>,
       toolbarHost
       )}
 
-      <section className="conversation-alert-rail" aria-label="待办与重要信息提醒">
+      {workspaceMode === 'all' && <section className="conversation-alert-rail" aria-label="待办与重要信息提醒">
         <div className="conversation-alert-viewport">
           {alertConversations.length > 0 ? (
             <div className={`conversation-alert-track${alertConversations.length > 1 ? ' is-moving' : ''}`}>
@@ -439,9 +434,10 @@ export const ConversationsView: React.FC = () => {
             <p className="conversation-alert-empty">当前没有挂起待办或星标提醒</p>
           )}
         </div>
-      </section>
+      </section>}
 
       {/* Secondary Modifier Row: Starred, Has Todos, Protection Filter */}
+      {workspaceMode === 'all' && (
       <div className="conversation-secondary-row flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="conversation-feature-filters flex items-center gap-2">
           <span className="text-slate-500 text-[11px]">特征筛选:</span>
@@ -498,23 +494,33 @@ export const ConversationsView: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Empty State */}
       {filteredConversations.length === 0 && (
         <div className="p-12 text-center rounded-xl bg-[#101522] border border-[#1e293b]">
           <MessageSquare className="w-8 h-8 text-slate-500 mx-auto mb-3" />
-          <p className="text-sm font-medium text-slate-300">没有符合筛选条件的会话</p>
-          <p className="text-xs text-slate-500 mt-1">请尝试调整选项卡或重置搜索词</p>
-          <button
+          <p className="text-sm font-medium text-slate-300">
+            {conversationDataSource === 'loading'
+              ? '正在读取本地会话'
+              : workspaceMode === 'focus'
+                ? '当前没有已星标或含挂起事项的会话'
+                : '没有符合筛选条件的会话'}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            {workspaceMode === 'focus' ? '不会用消息量或推测的本人责任填充首页' : '请调整筛选或重置搜索词'}
+          </p>
+          {conversationDataSource !== 'loading' && <button
             onClick={() => {
+              setWorkspaceMode('all');
               setChatTypeFilter('all');
               setActiveFilter('all');
               setSearchKeywords('');
             }}
-            className="mt-4 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-500 transition-colors"
+            className="mt-4 min-h-11 px-3 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-500 transition-colors"
           >
-            重置所有筛选
-          </button>
+            {workspaceMode === 'focus' ? '查看全部会话' : '重置所有筛选'}
+          </button>}
         </div>
       )}
 
@@ -522,7 +528,7 @@ export const ConversationsView: React.FC = () => {
       {/* LEVEL 1: COMPACT (紧凑模式)                                               */}
       {/* High-density grid, low card height (~68px), for massive directory scan   */}
       {/* ========================================================================= */}
-      {cardDensity === 'compact' && filteredConversations.length > 0 && (
+      {effectiveDensity === 'compact' && filteredConversations.length > 0 && (
         <div className="conversation-grid conversation-grid--compact grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2.5">
           {visibleConversations.map(conv => {
             const isSelected = selectedConversation?.id === conv.id;
@@ -531,7 +537,11 @@ export const ConversationsView: React.FC = () => {
               <div
                 key={conv.id}
                 id={`conv-card-compact-${conv.id}`}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleSelect(conv)}
+                onKeyDown={event => handleCardKeyDown(event, conv)}
+                aria-label={`打开会话：${conv.name}`}
                 className={`p-2.5 rounded-lg border transition-all cursor-pointer group flex items-center justify-between gap-2.5 select-none ${getCardStyle(
                   conv,
                   isSelected
@@ -594,7 +604,7 @@ export const ConversationsView: React.FC = () => {
       {/* LEVEL 2: STANDARD (标准模式)                                              */}
       {/* Balanced layout, medium card height (~145px), topic/role + 1-line summary */}
       {/* ========================================================================= */}
-      {cardDensity === 'standard' && filteredConversations.length > 0 && (
+      {effectiveDensity === 'standard' && filteredConversations.length > 0 && (
         <div className="conversation-grid conversation-grid--standard grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
           {visibleConversations.map(conv => {
             const isSelected = selectedConversation?.id === conv.id;
@@ -603,7 +613,11 @@ export const ConversationsView: React.FC = () => {
               <div
                 key={conv.id}
                 id={`conv-card-std-${conv.id}`}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleSelect(conv)}
+                onKeyDown={event => handleCardKeyDown(event, conv)}
+                aria-label={`打开会话：${conv.name}`}
                 className={`p-3.5 rounded-xl border transition-all cursor-pointer group flex flex-col justify-between ${getCardStyle(
                   conv,
                   isSelected
@@ -623,9 +637,11 @@ export const ConversationsView: React.FC = () => {
                         </div>
 
                         <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                          {conv.isGroup
-                            ? (conv.groupTopic || '群协作攻坚')
-                            : (conv.roleTitle || `近90天互动 ${conv.interactionDays90d} 天`)}
+                          {workspaceMode === 'focus'
+                            ? getConversationAttentionReason(conv)
+                            : conv.isGroup
+                              ? (conv.groupTopic || '群协作攻坚')
+                              : (conv.roleTitle || `近90天互动 ${conv.interactionDays90d} 天`)}
                         </p>
                       </div>
                     </div>
@@ -641,7 +657,7 @@ export const ConversationsView: React.FC = () => {
                           e.stopPropagation();
                           toggleFollowConversation(conv.id);
                         }}
-                        className={`p-1.5 rounded-lg transition-colors ${
+                        className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-colors ${
                           conv.isFollowed
                             ? 'text-amber-400 bg-amber-500/10'
                             : 'text-slate-500 hover:text-amber-400'
@@ -653,14 +669,14 @@ export const ConversationsView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* 1-Line AI Summary */}
+                  {/* One-line context; details stay in the inspector. */}
                   <p className="mt-2.5 text-xs text-slate-300 line-clamp-1 leading-relaxed">
-                    {conv.twoLineSummary}
+                    {workspaceMode === 'focus' ? (conv.topActionTodo?.title || conv.twoLineSummary) : conv.twoLineSummary}
                   </p>
                 </div>
 
                 {/* Bottom Action & Priority Indicator */}
-                <div className="mt-3 pt-2.5 border-t border-[#1e283d] flex items-center justify-between text-[11px]">
+                {workspaceMode === 'all' && <div className="mt-3 pt-2.5 border-t border-[#1e283d] flex items-center justify-between text-[11px]">
                   <div className="flex items-center gap-1.5 truncate">
                     {conv.topActionTodo ? (
                       <span className="text-amber-400 flex items-center gap-1 truncate font-medium">
@@ -678,7 +694,7 @@ export const ConversationsView: React.FC = () => {
                   <span className="text-[10px] font-mono text-slate-400 flex-shrink-0 ml-2">
                     评分 {conv.priorityScore}
                   </span>
-                </div>
+                </div>}
               </div>
             );
           })}
@@ -689,7 +705,7 @@ export const ConversationsView: React.FC = () => {
       {/* LEVEL 3: COMFORTABLE (舒适模式 - 全量摘要与深度行动)                       */}
       {/* Full analytical cards with AI reasoning, 2-line summary, action todo card */}
       {/* ========================================================================= */}
-      {cardDensity === 'comfortable' && filteredConversations.length > 0 && (
+      {effectiveDensity === 'comfortable' && filteredConversations.length > 0 && (
         <div className="conversation-grid conversation-grid--comfortable grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {visibleConversations.map(conv => {
             const isSelected = selectedConversation?.id === conv.id;
@@ -699,7 +715,11 @@ export const ConversationsView: React.FC = () => {
               <div
                 key={conv.id}
                 id={`conv-card-${conv.id}`}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleSelect(conv)}
+                onKeyDown={event => handleCardKeyDown(event, conv)}
+                aria-label={`打开会话：${conv.name}`}
                 className={`relative flex flex-col justify-between p-4 rounded-xl transition-all duration-150 cursor-pointer group select-none ${getCardStyle(
                   conv,
                   isSelected
@@ -869,7 +889,7 @@ export const ConversationsView: React.FC = () => {
       )}
 
       {/* Pagination & Infinite Scale Footer Bar for high volumes (e.g. 500 contacts) */}
-      {filteredConversations.length > 0 && (
+      {workspaceMode === 'all' && filteredConversations.length > 0 && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[#101522] border border-[#1e293b] text-xs mt-2">
           <div className="flex items-center gap-2 text-slate-400">
             <span>

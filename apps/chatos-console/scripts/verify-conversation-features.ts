@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   buildConversationFeatureFilters,
   filterConversationsByFeature,
+  getConversationAttentionReason,
+  selectDailyFocusConversations,
   selectConversationAlerts,
 } from '../src/core/conversationFeatureFilters.ts';
 import type { Conversation } from '../src/types.ts';
@@ -63,6 +65,54 @@ assert.deepEqual(
   selectConversationAlerts([first, second, third]).map(item => item.id),
   ['todo', 'followed'],
   'actionable conversations must lead starred reminders regardless of input order'
+);
+
+const noisy = conversation({
+  id: 'noisy',
+  name: '高频闲聊群',
+  isGroup: true,
+  categoryTag: 'noisy_group',
+  priorityScore: 99,
+});
+const project = conversation({
+  id: 'project',
+  name: '项目协作',
+  linkedProjectIds: ['project-2'],
+  priorityScore: 30,
+});
+const urgent = conversation({
+  id: 'urgent',
+  name: '紧急行动',
+  priorityScore: 10,
+  topActionTodo: { title: '今天确认方案', isUrgent: true } as Conversation['topActionTodo'],
+});
+const ordinaryTodo = conversation({
+  id: 'ordinary-todo',
+  name: '普通行动',
+  priorityScore: 90,
+  topActionTodo: { title: '后续跟进', isUrgent: false } as Conversation['topActionTodo'],
+});
+
+assert.deepEqual(
+  selectDailyFocusConversations([noisy, third, project, ordinaryTodo, first, urgent], 3).map(item => item.id),
+  ['followed', 'urgent', 'ordinary-todo'],
+  'only manual focus and actual pending work may enter daily focus'
+);
+assert.deepEqual(
+  selectDailyFocusConversations([noisy, third, project], 8),
+  [],
+  'message volume, project links and inferred categories are not enough evidence for daily focus'
+);
+assert.equal(
+  selectDailyFocusConversations([{ ...noisy, isFollowed: true }], 1)[0]?.id,
+  'noisy',
+  'manual pinning must be able to restore an automatically de-prioritized conversation'
+);
+assert.match(getConversationAttentionReason(urgent), /挂起事项/);
+assert.doesNotMatch(
+  getConversationAttentionReason(urgent),
+  /我负责|需要你|你的任务/,
+  'focus explanations must not invent an unbound user identity or responsibility'
 );
 
 console.log('Conversation feature filters regenerate from the current dataset.');

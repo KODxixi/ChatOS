@@ -89,3 +89,19 @@ test('failed images use one local fallback without a retry loop or false origina
   assert.deepEqual({ ...image }, previous);
   callback({ target: {} });
 });
+
+test('conversation workspace defaults to daily focus and keeps an explicit path to every conversation', () => {
+  const source = readFileSync(new URL('../src/components/views/ConversationsView.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  assert.match(source, /useState<['"]focus['"]\s*\|\s*['"]all['"]>\(['"]focus['"]\)/);
+  assert.match(source, /selectDailyFocusConversations\(conversations/);
+  assert.match(source, /id=['"]conversation-mode-focus['"]/);
+  assert.match(source, /id=['"]conversation-mode-all['"]/);
+  assert.match(source, /workspaceMode\s*===\s*['"]all['"]\s*&&/);
+  assert.doesNotMatch(source, /本地 Agent 聚焦|今日关注根据/);
+  assert.match(source, /role="button"/);
+  assert.match(source, /tabIndex=\{0\}/);
+  assert.match(source, /onKeyDown=/);
+  assert.match(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*0;/s);
+  assert.doesNotMatch(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*56rem;/s);
+});

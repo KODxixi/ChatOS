@@ -306,10 +306,24 @@ select:focus-visible,
 
 .conversation-toolbar {
   width: 100%;
-  min-width: 56rem;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--gary-space-2);
+}
+
+.conversation-type-tabs > :where(button, select),
+.conversation-density-control > button,
+.conversation-feature-filters > button,
+.conversation-search-module > input,
+.conversation-search-module > button,
+.conversation-card-surface button {
+  min-height: var(--gary-control-height);
+}
+
+.conversation-search-module > button,
+.conversation-card-surface button {
+  min-width: var(--gary-control-height);
 }
 
 @media (min-width: 768px) and (hover: hover) and (pointer: fine) {
@@ -403,6 +417,10 @@ select:focus-visible,
     grid-row: 1;
   }
 
+  .chatos-header[data-has-secondary="true"] .chatos-global-search {
+    grid-column: span 8;
+  }
+
   .chatos-header-actions {
     grid-column: span 3;
     grid-row: 1;
@@ -421,6 +439,10 @@ select:focus-visible,
     gap: var(--gary-space-2);
     min-width: 0;
     height: 100%;
+  }
+
+  .conversation-toolbar[data-mode="focus"] {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 1fr);
   }
 
   .conversation-control-module {
@@ -656,8 +678,14 @@ button.conversation-alert-item {
 }
 
 .conversation-card-name-row {
-  min-width: max-content;
-  overflow: visible;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.conversation-card-name-row::-webkit-scrollbar {
+  display: none;
 }
 
 .conversation-card-name {
@@ -665,6 +693,11 @@ button.conversation-alert-item {
   overflow: visible;
   text-overflow: clip;
   white-space: nowrap;
+}
+
+.conversation-card-surface:focus-visible {
+  outline: 2px solid var(--gary-focus-ring);
+  outline-offset: 2px;
 }
 
 .conversation-card-surface p[class*="line-clamp"] {
@@ -1116,6 +1149,10 @@ button.conversation-alert-item {
     display: grid !important;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     width: 100%;
+  }
+
+  .conversation-type-tabs[data-mode="focus"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .conversation-type-tabs button {

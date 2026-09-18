@@ -22,7 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCreateModal }) => {
       case 'conversations':
         return {
           title: '会话工作区',
-          subtitle: '按近90天关系强度排序 · 紧急事项自动上浮 · 拒绝刷屏干扰',
+          subtitle: '默认聚焦星标与挂起事项 · 依据可追溯 · 随时查看全部会话',
         };
       case 'todos':
         return {
@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCreateModal }) => {
             </kbd>
           </button>
 
-          <div className="chatos-header-actions">
+          {activeWorkspace !== 'conversations' && <div className="chatos-header-actions">
             <button
               id="model-sim-toggle"
               onClick={toggleModelSim}
@@ -122,7 +122,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCreateModal }) => {
                 </span>
               </button>
             )}
-          </div>
+          </div>}
         </div>
 
         {activeWorkspace === 'conversations' && (

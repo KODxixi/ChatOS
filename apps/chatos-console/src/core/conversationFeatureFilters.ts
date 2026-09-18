@@ -110,3 +110,29 @@ export const selectConversationAlerts = (conversations: Conversation[], limit = 
         b.priorityScore - a.priorityScore
     )
     .slice(0, limit);
+
+const attentionRank = (conversation: Conversation) => {
+  if (conversation.isFollowed) return 0;
+  if (conversation.topActionTodo?.isUrgent) return 1;
+  return 2;
+};
+
+export const getConversationAttentionReason = (conversation: Conversation) => {
+  const reasons = [
+    conversation.isFollowed ? '已手动星标' : '',
+    conversation.topActionTodo
+      ? (conversation.topActionTodo.isUrgent ? '会话中存在高优先级挂起事项' : '会话中存在挂起事项')
+      : '',
+  ].filter(Boolean);
+  return reasons.join(' · ');
+};
+
+export const selectDailyFocusConversations = (conversations: Conversation[], limit = 8) =>
+  [...conversations]
+    .filter(conversation => conversation.isFollowed || Boolean(conversation.topActionTodo))
+    .sort((a, b) =>
+      attentionRank(a) - attentionRank(b)
+      || b.priorityScore - a.priorityScore
+      || a.id.localeCompare(b.id)
+    )
+    .slice(0, limit);
