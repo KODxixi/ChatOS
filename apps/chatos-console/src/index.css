@@ -1097,6 +1097,16 @@ button.conversation-alert-item {
 }
 
 @media (max-width: 767px) {
+  .conversation-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .conversation-control-module {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+
   .chatos-content:has(.chatos-inspector) {
     z-index: 30;
   }
