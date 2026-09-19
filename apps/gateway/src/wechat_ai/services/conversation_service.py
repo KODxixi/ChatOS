@@ -30,6 +30,7 @@ _CONVERSATION_COLUMNS = """
     COALESCE(o.project_id, conversations.project_id) AS project_id,
     COALESCE(o.project_role, conversations.project_role) AS project_role,
     COALESCE(o.classification_status, conversations.classification_status, 'needs_review') AS classification_status,
+    o.group_id AS group_id,
     COALESCE(source_accounts.source_app_id, 'wechat') AS source_app_id,
     COALESCE(
         conversation_origins.source_account_id,
@@ -69,6 +70,10 @@ class ConversationNotFound(LookupError):
 
 
 class MessageNotFound(LookupError):
+    pass
+
+
+class ConversationGroupNotFound(LookupError):
     pass
 
 
@@ -216,6 +221,7 @@ def update_conversation(
         "isArchived": "is_archived",
         "note": "note",
         "isIndexingEnabled": "is_indexing_enabled",
+        "groupId": "group_id",
     }
     exists = connection.execute(
         "SELECT 1 FROM conversations WHERE id = ?",
@@ -224,6 +230,13 @@ def update_conversation(
     if exists is None:
         raise ConversationNotFound(conversation_id)
 
+    group_id = updates.get("groupId")
+    if group_id is not None and connection.execute(
+        "SELECT 1 FROM conversation_groups WHERE id = ?",
+        (group_id,),
+    ).fetchone() is None:
+        raise ConversationGroupNotFound(str(group_id))
+
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     override_cols: list[str] = []
     values: list[object] = []
@@ -231,7 +244,7 @@ def update_conversation(
     for field, value in updates.items():
         col = columns[field]
         override_cols.append(col)
-        values.append(int(value) if field != "note" else value)
+        values.append(int(value) if field in {"isFavorite", "isArchived", "isIndexingEnabled"} else value)
         conflict_sets.append(f"{col} = excluded.{col}")
 
     col_list = ", ".join(override_cols)
@@ -429,6 +442,7 @@ def _conversation_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "projectId": row["project_id"],
         "projectRole": row["project_role"],
         "classificationStatus": row["classification_status"],
+        "groupId": row["group_id"],
         "note": row["note"],
     }
 

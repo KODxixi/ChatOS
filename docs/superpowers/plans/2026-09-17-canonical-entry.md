@@ -20,7 +20,7 @@
 Ownership: ChatOS files only, except docs/superpowers and shared-governance staging used by controller. Work in current canonical checkout on task branch; source path correctness is the object of this migration, so no extra unregistered checkout. Baselines: root 972971162855c297c52b51ecb0a3aa85298275d5; prototype e9d78e9c3f1c216c668a4810fe890d764131b88a.
 
 - [x] Preserve exact old frontend and prototype baselines with Git archives/bundles under ignored var/backups; report locations. Keep original prototype repo intact, mark it retired with forwarding README after integration.
-- [x] Import only tracked source/config/assets/verification scripts from artifacts/chatos-ui-aistudio into apps/chatos-console. Exclude .git, node_modules, secrets, screenshots, runtime data. Archive superseded formal frontend files, don't leave duplicate active component trees.
+- [x] Import only tracked source/config/assets/verification scripts from the retired prototype captured by the recorded origin commit into apps/chatos-console. Exclude .git, node_modules, secrets, screenshots, runtime data. Archive superseded formal frontend files, don't leave duplicate active component trees.
 - [x] Keep existing Express read-only adapter and UI. Correct DB config lookup for new location. Keep missing backend/prototype status honest. No new direct writes to raw tables. Mark the currently mixed real-conversation/demo-module scope visibly, without changing the visual design.
 - [x] Test-first source/build/runtime identity and occupied-port rejection. Native package scripts build both UI/server plus build metadata with source-content identity, canonical relative source and origin commit; identity changes when source changes, not just timestamp. Expose runtime identity read-only, including source root/build identity and actual runtime code startup identity; avoid reading a replaced manifest and claiming old process is new.
 - [x] Add a repo verification command (scripts/verify-entry.mjs, optionally --live), checking formal source Git tracking, build freshness/output identity and runtime contract; failures nonzero. Source checks should work with staged files before initial commit. Wire formal launcher to this gate.
@@ -28,7 +28,7 @@ Ownership: ChatOS files only, except docs/superpowers and shared-governance stag
 - [x] Gateway browser entry must stop serving the old UI and send users to canonical UI 3108, preserving API behavior and session protection. Reuse existing frontend plugin configuration; regression test API routes unaffected. No hardcoded external redirects or open redirect input.
 - [x] Update repo README/AGENTS + console AGENTS, native config examples, startup docs so all active instructions agree. Historical evidence may remain identified as historical. Declare formal vs dev vs retired, build/start/verify/data/logs boundaries. No new overarching registry needed.
 - [x] Run relevant regression checks, typecheck/build, live HTTP/assets identity, backend frontend/runtime targeted tests. Leave running services only if verified safe; browser review is controller responsibility. Existing CSP assertion failure is disclosed, not counted as passing.
-- [x] Commit only Task 1 changes on task branch, report full tests/TDD evidence and limitations to .superpowers/sdd/2026-09-17-canonical-entry/task-1-report.md.
+- [x] Commit only Task 1 changes on task branch; preserve tests/TDD evidence and limitations in the formal test suite and Git history.
 
 ## Task 2: Shared standards (controller)
 

@@ -161,6 +161,11 @@ def test_conversation_list_and_message_response_use_camel_case(
                 "isArchived": False,
                 "isIndexingEnabled": True,
                 "note": "keep",
+                "domain": None,
+                "projectId": None,
+                "projectRole": None,
+                "classificationStatus": "needs_review",
+                "groupId": None,
             },
             {
                 "id": "alpha",
@@ -175,6 +180,11 @@ def test_conversation_list_and_message_response_use_camel_case(
                 "isArchived": False,
                 "isIndexingEnabled": True,
                 "note": "",
+                "domain": None,
+                "projectId": None,
+                "projectRole": None,
+                "classificationStatus": "needs_review",
+                "groupId": None,
             },
         ],
         "nextCursor": None,
@@ -198,6 +208,85 @@ def test_conversation_list_and_message_response_use_camel_case(
         except sqlite3.ProgrammingError:
             continue
         raise AssertionError("request connection was not closed")
+
+
+def test_summary_retains_ten_source_backed_important_messages(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from wechat_ai.services import llm_service
+
+    database_path = tmp_path / "library.sqlite"
+    _seed_library(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO messages (
+                conversation_id, source_message_id, dedupe_key, sender_id,
+                sender_name, sent_at, type, content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "alpha",
+                    f"important-{index}",
+                    f"alpha:important-{index}",
+                    "alice",
+                    "Alice",
+                    3_000 + index,
+                    "text",
+                    f"请在明天完成第{index}项关键交付并同步确认结果",
+                )
+                for index in range(1, 13)
+            ],
+        )
+        connection.commit()
+
+    monkeypatch.setattr(llm_service, "_use_local_llm", False)
+    monkeypatch.setattr(llm_service, "LLM_KEY", None)
+    client, _ = _make_client(database_path)
+
+    response = client.get("/api/conversations/alpha/summary")
+
+    assert response.status_code == 200
+    important_messages = response.json()["importantMessages"]
+    assert len(important_messages) == 10
+    assert len({item["messageId"] for item in important_messages}) == 10
+    assert all(
+        set(item) == {"messageId", "senderName", "sentAt", "content"}
+        for item in important_messages
+    )
+    assert all("关键交付" in item["content"] for item in important_messages)
+
+
+def test_media_endpoint_keeps_type_records_without_resolved_assets(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "library.sqlite"
+    _seed_library(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO messages (
+                conversation_id, source_message_id, dedupe_key, sender_id,
+                sender_name, sent_at, type, content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ("alpha", "m-image", "alpha:m-image", "alice", "Alice", 4_000, "image", "图片消息"),
+                ("alpha", "m-voice", "alpha:m-voice", "bob", "Bob", 3_500, "voice", "语音 00:12"),
+                ("alpha", "m-file", "alpha:m-file", "alice", "Alice", 3_000, "attachment", "设计说明.pdf"),
+            ),
+        )
+        connection.commit()
+
+    client, _ = _make_client(database_path)
+    response = client.get("/api/conversations/alpha/media?kind=all")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["type"] for item in items] == ["image", "voice", "attachment"]
+    assert all(item["hasLocalFile"] is False for item in items)
 
 
 def test_messages_include_archived_assets_and_sanitize_unsupported_content(
@@ -344,6 +433,11 @@ def test_get_and_patch_conversation_preserves_non_local_fields(
         "isArchived": True,
         "isIndexingEnabled": True,
         "note": "local note",
+        "domain": None,
+        "projectId": None,
+        "projectRole": None,
+        "classificationStatus": "needs_review",
+        "groupId": None,
     }
 
     connection = sqlite3.connect(database_path)
@@ -357,6 +451,14 @@ def test_get_and_patch_conversation_preserves_non_local_fields(
             """,
             ("alpha",),
         ).fetchone()
+        override = connection.execute(
+            """
+            SELECT is_favorite, is_archived, note
+            FROM conversation_overrides
+            WHERE conversation_id = ?
+            """,
+            ("alpha",),
+        ).fetchone()
     finally:
         connection.close()
     assert row == (
@@ -364,10 +466,49 @@ def test_get_and_patch_conversation_preserves_non_local_fields(
         "Alpha",
         "direct",
         2,
-        1,
-        1,
-        "local note",
+        0,
+        0,
+        "",
     )
+    assert override == (1, 1, "local note")
+
+
+def test_conversation_groups_persist_without_writing_raw_conversations(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "library.sqlite"
+    _seed_library(database_path)
+    client, _connections = _make_client(database_path)
+
+    defaults = client.get("/api/conversation-groups")
+    created = client.post("/api/conversation-groups", json={"name": "客户"})
+    group_id = created.json()["id"]
+    assigned = client.patch(
+        "/api/conversations/alpha",
+        json={"groupId": group_id},
+    )
+    listed = client.get("/api/conversation-groups")
+    deleted = client.delete(f"/api/conversation-groups/{group_id}")
+    after_delete = client.get("/api/conversations/alpha")
+
+    assert defaults.status_code == 200
+    assert [item["name"] for item in defaults.json()["items"]] == ["个人", "工作", "学习"]
+    assert created.status_code == 201
+    assert assigned.status_code == 200
+    assert assigned.json()["groupId"] == group_id
+    assert next(item for item in listed.json()["items"] if item["id"] == group_id)["count"] == 1
+    assert deleted.status_code == 204
+    assert after_delete.json()["groupId"] is None
+
+    with sqlite3.connect(database_path) as connection:
+        raw = connection.execute(
+            "SELECT title, is_favorite, is_archived FROM conversations WHERE id = 'alpha'"
+        ).fetchone()
+        override = connection.execute(
+            "SELECT group_id FROM conversation_overrides WHERE conversation_id = 'alpha'"
+        ).fetchone()
+    assert raw == ("Alpha", 0, 0)
+    assert override == (None,)
 
 
 def test_not_found_and_validation_errors_use_stable_contract(

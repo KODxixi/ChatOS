@@ -600,7 +600,7 @@ def locate_image_dat_by_context(
         image_dir.relative_to(root)
     except ValueError:
         return None
-    for suffix in (".dat", "_h.dat", "_t.dat"):
+    for suffix in ("_h.dat", "_t.dat", ".dat"):
         candidate = (image_dir / f"{normalized_key}{suffix}").resolve()
         if _is_file_within(candidate, root):
             return candidate

@@ -117,53 +117,39 @@ export const TodosView: React.FC = () => {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Top Workspace Mode Selector */}
-      <div className="px-6 pt-4 pb-2 border-b border-[#1d273a] bg-[#111722] flex items-center justify-between gap-3 flex-shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="chatos-view-tabbar-wrap px-6 pt-4 pb-2 flex-shrink-0">
+        <div className="chatos-view-tabbar" role="tablist" aria-label="待办视图">
           <button
             id="todo-view-tab-personal"
+            role="tab"
             onClick={() => setViewTab('personal_kanban')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
+            aria-selected={viewTab === 'personal_kanban'}
+            className={`chatos-view-tab ${
               viewTab === 'personal_kanban'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
+                ? 'is-active'
+                : ''
             }`}
           >
             <LayoutGrid className="w-3.5 h-3.5" />
-            <span>个人待办看板</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                viewTab === 'personal_kanban' ? 'bg-indigo-700 text-indigo-100' : 'bg-[#1e283b] text-slate-400'
-              }`}
-            >
-              {todos.filter(t => !t.isIgnored).length}
-            </span>
+            <span>我的</span>
+            <span className="chatos-view-tab-count">{todos.filter(t => !t.isIgnored).length}</span>
           </button>
 
           <button
             id="todo-view-tab-shared"
+            role="tab"
             onClick={() => setViewTab('collaborative_lists')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
+            aria-selected={viewTab === 'collaborative_lists'}
+            className={`chatos-view-tab ${
               viewTab === 'collaborative_lists'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
+                ? 'is-active'
+                : ''
             }`}
           >
             <Users className="w-3.5 h-3.5" />
-            <span>跨团队共享清单</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                viewTab === 'collaborative_lists' ? 'bg-indigo-700 text-indigo-100' : 'bg-[#1e283b] text-slate-400'
-              }`}
-            >
-              {totalSharedTasks}
-            </span>
+            <span>协作</span>
+            <span className="chatos-view-tab-count">{totalSharedTasks}</span>
           </button>
-        </div>
-
-        <div className="text-xs text-slate-400 hidden sm:block">
-          {viewTab === 'personal_kanban'
-            ? '从会话提取的行动承诺与个人排期'
-            : '支持多人指派、联合攻坚与交付勾选'}
         </div>
       </div>
 
@@ -173,64 +159,24 @@ export const TodosView: React.FC = () => {
       ) : (
         <div className="flex-1 flex flex-col h-full overflow-hidden p-6 space-y-5">
           {/* Top Filter Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            id="todo-filter-all"
-            onClick={() => { setRoleFilter('all'); setShowIgnored(false); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              roleFilter === 'all' && !showIgnored
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
+          <div className="chatos-filter-bar flex items-center justify-between gap-3">
+        <label className="chatos-filter-field">
+          <span>责任范围</span>
+          <select
+            id="todo-role-select"
+            value={roleFilter}
+            onChange={event => {
+              setRoleFilter(event.target.value as typeof roleFilter);
+              setShowIgnored(false);
+            }}
           >
-            全部事项 ({todos.filter(t => !t.isIgnored).length})
-          </button>
-          <button
-            id="todo-filter-responsible"
-            onClick={() => { setRoleFilter('i_am_responsible'); setShowIgnored(false); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              roleFilter === 'i_am_responsible' && !showIgnored
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            我负责 ({todos.filter(t => t.assigneeRole === 'i_am_responsible' && !t.isIgnored).length})
-          </button>
-          <button
-            id="todo-filter-promised"
-            onClick={() => { setRoleFilter('i_promised'); setShowIgnored(false); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              roleFilter === 'i_promised' && !showIgnored
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            我承诺 ({todos.filter(t => t.assigneeRole === 'i_promised' && !t.isIgnored).length})
-          </button>
-          <button
-            id="todo-filter-follow"
-            onClick={() => { setRoleFilter('i_need_follow_up'); setShowIgnored(false); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              roleFilter === 'i_need_follow_up' && !showIgnored
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            我需跟进 ({todos.filter(t => t.assigneeRole === 'i_need_follow_up' && !t.isIgnored).length})
-          </button>
-          <button
-            id="todo-filter-other"
-            onClick={() => { setRoleFilter('other'); setShowIgnored(false); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              roleFilter === 'other' && !showIgnored
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            他人事项
-          </button>
-        </div>
+            <option value="all">全部事项 · {todos.filter(t => !t.isIgnored).length}</option>
+            <option value="i_am_responsible">我负责 · {todos.filter(t => t.assigneeRole === 'i_am_responsible' && !t.isIgnored).length}</option>
+            <option value="i_promised">我承诺 · {todos.filter(t => t.assigneeRole === 'i_promised' && !t.isIgnored).length}</option>
+            <option value="i_need_follow_up">我需跟进 · {todos.filter(t => t.assigneeRole === 'i_need_follow_up' && !t.isIgnored).length}</option>
+            <option value="other">他人事项</option>
+          </select>
+        </label>
 
         <button
           id="todo-toggle-ignored"

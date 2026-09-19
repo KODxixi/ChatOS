@@ -47,7 +47,7 @@ const payload = (conversationId, id, anchored = false) => ({
     senderAvatar: '', content: id, timestamp: '10:00', hasAttachment: false }],
 });
 
-function harness(t) {
+function harness(t, { selectDatabaseConversation = true } = {}) {
   const slots = [], requests = [];
   let cursor = 0, pending = [], dirty = true, mounted = true, value, updatesAfterUnmount = 0;
   const changed = (a, b) => !a || a.length !== b.length || a.some((v, i) => !Object.is(v, b[i]));
@@ -109,6 +109,7 @@ function harness(t) {
   };
   t.after(unmount);
   render();
+  if (selectDatabaseConversation) value.setSelectedConversation(conversations[0]);
   value.setConversationDataSource('database');
   render();
   return {
@@ -120,6 +121,14 @@ function harness(t) {
     jump(id, messageId) { return this.act(v => v.jumpToMessage(id, messageId)); },
   };
 }
+
+test('database loading waits for a real conversation selection before requesting messages', t => {
+  const h = harness(t, { selectDatabaseConversation: false });
+  assert.equal(h.value.selectedConversation, null);
+  assert.equal(h.requests.length, 0);
+  h.select('A');
+  assert.match(h.requests.at(-1).url, /\/A\/messages\?limit=100$/);
+});
 
 test('ordinary selection loads the selected conversation and cancels its predecessor', async t => {
   const h = harness(t);

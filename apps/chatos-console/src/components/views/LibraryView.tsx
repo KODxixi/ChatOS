@@ -1,315 +1,210 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  FileText,
-  Image as ImageIcon,
-  FileCode,
-  Archive,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
-  RotateCw,
-  ExternalLink,
-  Eye,
-  Trash2,
-  Copy,
-  Hash,
-  Filter,
-  X,
+  Database,
+  Search,
+  RefreshCw,
 } from 'lucide-react';
 import { useChatOS } from '../../context/ChatOSContext';
-import { KnowledgeItem, IntakeStatus } from '../../types';
+import type { KnowledgeItem } from '../../types';
+
+type TypeFilter = 'all' | 'image' | 'file' | 'audio' | 'video' | 'link';
+
+const FILE_TYPES = new Set<KnowledgeItem['fileType']>(['pdf', 'doc', 'code', 'archive']);
+
+const TYPE_GROUPS: Array<{ key: TypeFilter; label: string }> = [
+  { key: 'image', label: '图片' },
+  { key: 'file', label: '文件' },
+  { key: 'audio', label: '语音' },
+  { key: 'video', label: '视频' },
+  { key: 'link', label: '链接' },
+];
+
+const matchesType = (item: KnowledgeItem, filter: TypeFilter) =>
+  filter === 'all'
+  || item.fileType === filter
+  || (filter === 'file' && FILE_TYPES.has(item.fileType));
 
 export const LibraryView: React.FC = () => {
   const {
     knowledgeItems,
-    conversations,
     projects,
-    retryKnowledgeIntake,
-    revokeKnowledgeItem,
-    jumpToMessage,
-    showToast,
+    knowledgeDataStatus,
+    knowledgeIndexStatus,
+    runKnowledgeIndex,
   } = useChatOS();
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending'>('all');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [query, setQuery] = useState('');
 
-  const [statusFilter, setStatusFilter] = useState<'all' | IntakeStatus>('all');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'image' | 'pdf' | 'doc' | 'archive'>('all');
-  const [projectFilter, setProjectFilter] = useState<string>('all');
-  const [previewItem, setPreviewItem] = useState<KnowledgeItem | null>(null);
+  const filteredItems = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return knowledgeItems.filter(item => {
+      if (statusFilter === 'pending' && item.intakeStatus === 'stored') return false;
+      if (!matchesType(item, typeFilter)) return false;
+      if (!normalized) return true;
+      return [item.title, item.fileName, item.sourceConversationName]
+        .some(value => value.toLocaleLowerCase().includes(normalized));
+    });
+  }, [knowledgeItems, query, statusFilter, typeFilter]);
 
-  const filteredItems = knowledgeItems.filter(item => {
-    if (statusFilter !== 'all' && item.intakeStatus !== statusFilter) return false;
-    if (typeFilter !== 'all' && item.fileType !== typeFilter) return false;
-    if (projectFilter !== 'all' && item.linkedProjectId !== projectFilter) return false;
-    return true;
-  });
-
-  const getStatusBadge = (status: IntakeStatus) => {
-    switch (status) {
-      case 'stored':
-        return { text: '已入库', color: 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60' };
-      case 'pending_confirmation':
-        return { text: '待确认', color: 'bg-amber-950/70 text-amber-300 border-amber-700/60' };
-      case 'pending_fetch':
-        return { text: '待获取原文件', color: 'bg-indigo-950/70 text-indigo-300 border-indigo-700/60' };
-      case 'processing':
-        return { text: '处理中', color: 'bg-blue-950/70 text-blue-300 border-blue-700/60' };
-      case 'failed':
-        return { text: '入库失败', color: 'bg-rose-950/70 text-rose-300 border-rose-700/60' };
-    }
-  };
-
-  const copyHash = (hash: string) => {
-    navigator.clipboard.writeText(hash);
-    showToast('内容哈希已复制到剪贴板');
-  };
+  const pendingCount = knowledgeItems.filter(item => item.intakeStatus !== 'stored').length;
+  const typeStats = useMemo(
+    () => TYPE_GROUPS.map(group => ({
+      ...group,
+      count: filteredItems.filter(item => matchesType(item, group.key)).length,
+    })),
+    [filteredItems],
+  );
+  const conversationStats = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number }>();
+    filteredItems.forEach(item => {
+      const current = counts.get(item.sourceConversationId);
+      counts.set(item.sourceConversationId, {
+        name: item.sourceConversationName,
+        count: (current?.count || 0) + 1,
+      });
+    });
+    return [...counts.entries()]
+      .map(([id, value]) => ({ id, ...value }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'))
+      .slice(0, 8);
+  }, [filteredItems]);
+  const projectStats = useMemo(() => {
+    const assignedConversationIds = new Set(projects.flatMap(project => project.linkedConversationIds));
+    const rows = projects
+      .map(project => ({
+        id: project.id,
+        name: project.name,
+        count: filteredItems.filter(item => project.linkedConversationIds.includes(item.sourceConversationId)).length,
+      }))
+      .filter(row => row.count > 0)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'));
+    const unassignedCount = filteredItems.filter(item => !assignedConversationIds.has(item.sourceConversationId)).length;
+    if (unassignedCount > 0) rows.push({ id: 'unassigned', name: '未关联项目', count: unassignedCount });
+    return rows.slice(0, 8);
+  }, [filteredItems, projects]);
+  const stats = knowledgeIndexStatus.stats || {};
+  const indexSummary = knowledgeIndexStatus.status === 'running'
+    ? (knowledgeIndexStatus.stage === 'archive' ? '正在整理媒体与证据清单' : 'local-model 正在生成本地向量')
+    : knowledgeIndexStatus.status === 'completed'
+      ? `已索引 ${stats.files_indexed ?? stats.documentsWritten ?? 0} 个文档 · ${stats.chunks_indexed ?? 0} 个片段`
+      : knowledgeIndexStatus.status === 'failed'
+        ? `索引失败：${knowledgeIndexStatus.error || '未知错误'}`
+        : knowledgeIndexStatus.status === 'interrupted'
+          ? '上次索引被中断，可安全重新运行'
+          : '尚未建立 ChatOS 本地向量索引';
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto p-6 space-y-6">
-      {/* Filters Row */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        {/* Status Filter */}
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="flex-1 h-full overflow-y-auto p-6 lg:p-8">
+      <section className="gary-glass gary-regular rounded-[var(--gary-radius-control)] p-5" aria-labelledby="knowledge-title">
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-slate-100">
+              <Database className="w-4 h-4 text-indigo-300" />
+              <h2 id="knowledge-title" className="text-base font-semibold">ChatOS 本地资料库</h2>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-400">微信原始数据保持只读；此处仅展示可追溯、可重建的文件与媒体投影。</p>
+            <p className={`mt-2 text-[11px] ${knowledgeIndexStatus.status === 'failed' ? 'text-rose-300' : 'text-slate-500'}`}>{indexSummary}</p>
+          </div>
           <button
-            id="lib-status-all"
-            onClick={() => setStatusFilter('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === 'all'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
+            type="button"
+            onClick={() => void runKnowledgeIndex()}
+            disabled={knowledgeIndexStatus.status === 'running'}
+            className="min-h-11 px-3 inline-flex items-center justify-center gap-2 border border-white/15 rounded-[var(--gary-radius-control)] text-xs text-slate-200 hover:text-white hover:border-white/30 disabled:opacity-45 disabled:cursor-not-allowed"
           >
-            全部资料 ({knowledgeItems.length})
-          </button>
-          <button
-            id="lib-status-stored"
-            onClick={() => setStatusFilter('stored')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === 'stored'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            已入库 ({knowledgeItems.filter(k => k.intakeStatus === 'stored').length})
-          </button>
-          <button
-            id="lib-status-pending"
-            onClick={() => setStatusFilter('pending_confirmation')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === 'pending_confirmation'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            待确认 ({knowledgeItems.filter(k => k.intakeStatus === 'pending_confirmation').length})
-          </button>
-          <button
-            id="lib-status-missing"
-            onClick={() => setStatusFilter('pending_fetch')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === 'pending_fetch'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
-          >
-            待获取原文件 ({knowledgeItems.filter(k => k.intakeStatus === 'pending_fetch').length})
+            <RefreshCw className={`w-4 h-4 ${knowledgeIndexStatus.status === 'running' ? 'animate-spin' : ''}`} />
+            {knowledgeIndexStatus.status === 'running' ? '整理中' : '整理并索引'}
           </button>
         </div>
 
-        {/* Project and Type Selectors */}
-        <div className="flex items-center gap-2 text-xs">
-          <select
-            id="lib-project-select"
-            value={projectFilter}
-            onChange={e => setProjectFilter(e.target.value)}
-            className="bg-[#151c2c] text-slate-300 border border-[#212c42] rounded-lg px-2.5 py-1.5 outline-none cursor-pointer"
-          >
-            <option value="all">所有项目</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+        <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400">
+          <span><strong className="text-slate-100 font-semibold">{knowledgeItems.length}</strong> 条资料记录</span>
+          <span><strong className="text-amber-300 font-semibold">{pendingCount}</strong> 条待解析</span>
+          <span><strong className="text-slate-100 font-semibold">{stats.assetsArchived ?? 0}</strong> 个归档对象</span>
+        </div>
 
-          <select
-            id="lib-type-select"
-            value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value as any)}
-            className="bg-[#151c2c] text-slate-300 border border-[#212c42] rounded-lg px-2.5 py-1.5 outline-none cursor-pointer"
-          >
-            <option value="all">所有类型</option>
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-[minmax(260px,1fr)_auto_auto] gap-3">
+          <label className="relative min-w-0">
+            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3.5 pointer-events-none" />
+            <input
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder="搜索文件、会话或摘要"
+              className="w-full min-h-11 pl-9 pr-3 bg-transparent border border-white/10 rounded-[var(--gary-radius-control)] text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-400/60"
+            />
+          </label>
+          <select value={typeFilter} onChange={event => setTypeFilter(event.target.value as TypeFilter)} className="min-h-11 px-3 bg-transparent border border-white/10 rounded-[var(--gary-radius-control)] text-xs text-slate-300">
+            <option value="all">全部类型</option>
             <option value="image">图片</option>
-            <option value="pdf">PDF 文档</option>
-            <option value="doc">Word / 文本</option>
-            <option value="archive">压缩包</option>
+            <option value="file">文件</option>
+            <option value="audio">语音</option>
+            <option value="video">视频</option>
+            <option value="link">链接</option>
           </select>
-        </div>
-      </div>
-
-      {/* Library Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredItems.map(item => {
-          const statusBadge = getStatusBadge(item.intakeStatus);
-          const linkedProj = projects.find(p => p.id === item.linkedProjectId);
-
-          return (
-            <div
-              key={item.id}
-              id={`library-card-${item.id}`}
-              className="p-4 rounded-xl bg-[#131926] border border-[#212b3e] hover:border-indigo-500/50 transition-all flex flex-col justify-between space-y-3 group hover:bg-[#161d2d]"
-            >
-              <div>
-                {/* Image Preview or File Type Banner */}
-                {item.fileType === 'image' && item.thumbnailUrl ? (
-                  <div
-                    onClick={() => setPreviewItem(item)}
-                    className="w-full h-36 rounded-lg bg-[#0c1017] overflow-hidden mb-3 border border-[#1f283a] cursor-pointer group-hover:opacity-90 relative"
-                  >
-                    <img src={item.thumbnailUrl} alt={item.fileName} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs gap-1.5">
-                      <Eye className="w-4 h-4" />
-                      <span>点击预览</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 mb-3 p-3 rounded-lg bg-[#182033] border border-[#26334d]">
-                    <div className="w-10 h-10 rounded-lg bg-[#202c44] flex items-center justify-center text-indigo-400 flex-shrink-0">
-                      {item.fileType === 'pdf' ? (
-                        <FileText className="w-5 h-5" />
-                      ) : item.fileType === 'archive' ? (
-                        <Archive className="w-5 h-5" />
-                      ) : (
-                        <FileCode className="w-5 h-5" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-200 truncate">{item.fileName}</p>
-                      <p className="text-[10px] text-slate-400">{item.fileSize}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Status & Project Tag */}
-                <div className="flex items-center justify-between gap-2">
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadge.color}`}>
-                    {statusBadge.text}
-                  </span>
-
-                  {linkedProj && (
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-[#182133] text-indigo-300 border border-[#273754] truncate max-w-[140px]">
-                      {linkedProj.name}
-                    </span>
-                  )}
-                </div>
-
-                {/* Title */}
-                <h4 className="text-xs font-semibold text-slate-100 mt-2.5 line-clamp-1">
-                  {item.title}
-                </h4>
-
-                {/* Content Hash Tag (Acceptance Criterion 5: Hash deduplication) */}
-                <div className="mt-2 flex items-center justify-between text-[10px] font-mono text-slate-400 bg-[#0d121c] p-1.5 rounded border border-[#1b2334]">
-                  <span className="truncate max-w-[190px] flex items-center gap-1">
-                    <Hash className="w-3 h-3 text-indigo-400 flex-shrink-0" />
-                    {item.contentHash.slice(0, 24)}...
-                  </span>
-                  <button
-                    onClick={() => copyHash(item.contentHash)}
-                    className="text-slate-500 hover:text-slate-300 p-0.5"
-                    title="复制完整内容哈希"
-                  >
-                    <Copy className="w-3 h-3" />
-                  </button>
-                </div>
-
-                {item.isDuplicateSample && (
-                  <p className="text-[10px] text-indigo-400 mt-1">
-                    * 镜像副本已去重复用，保留多来源记录
-                  </p>
-                )}
-
-                {item.failureReason && (
-                  <p className="text-[10px] text-rose-400 mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                    <span>{item.failureReason}</span>
-                  </p>
-                )}
-              </div>
-
-              {/* Card Footer Actions */}
-              <div className="pt-3 border-t border-[#1d273a] flex items-center justify-between text-xs">
-                <button
-                  id={`jump-lib-source-${item.id}`}
-                  onClick={() => jumpToMessage(item.sourceConversationId, item.sourceMessageId)}
-                  className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
-                  title={`定位原消息来源：${item.sourceConversationName}`}
-                >
-                  <span>来源会话</span>
-                  <ExternalLink className="w-3 h-3" />
-                </button>
-
-                <div className="flex items-center gap-2">
-                  {(item.intakeStatus === 'pending_fetch' || item.intakeStatus === 'failed') && (
-                    <button
-                      onClick={() => retryKnowledgeIntake(item.id)}
-                      className="flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300"
-                    >
-                      <RotateCw className="w-3 h-3" />
-                      <span>重试获取</span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => revokeKnowledgeItem(item.id)}
-                    className="text-[10px] text-slate-500 hover:text-rose-400 transition-colors"
-                  >
-                    撤回收录
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Preview Modal */}
-      {previewItem && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-[#131926] border border-[#28354c] rounded-xl overflow-hidden shadow-2xl space-y-4">
-            <div className="p-4 border-b border-[#212c40] flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">{previewItem.fileName}</h3>
-                <p className="text-xs text-slate-400 mt-0.5">来源：{previewItem.sourceConversationName}</p>
-              </div>
-              <button
-                onClick={() => setPreviewItem(null)}
-                className="p-1 text-slate-400 hover:text-white rounded"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 flex flex-col items-center justify-center">
-              {previewItem.thumbnailUrl ? (
-                <img
-                  src={previewItem.thumbnailUrl}
-                  alt={previewItem.fileName}
-                  className="max-h-96 rounded-lg object-contain"
-                />
-              ) : (
-                <div className="w-full h-48 rounded-lg bg-[#0d121c] border border-[#1e283b] flex flex-col items-center justify-center text-slate-400 gap-2">
-                  <FileText className="w-12 h-12 text-indigo-400" />
-                  <span className="text-xs font-mono">{previewItem.fileName}</span>
-                  <span className="text-[11px] text-slate-500">文件大小：{previewItem.fileSize}</span>
-                </div>
-              )}
-
-              <div className="w-full mt-4 p-3 bg-[#0d121c] rounded-lg border border-[#1e273a] text-xs space-y-1 font-mono">
-                <div className="text-slate-400">内容哈希：{previewItem.contentHash}</div>
-                <div className="text-slate-400">入库时间：{previewItem.createdAt}</div>
-              </div>
-            </div>
+          <div className="chatos-view-tabbar" role="tablist" aria-label="资料视图">
+            <button id="lib-status-all" type="button" role="tab" aria-selected={statusFilter === 'all'} onClick={() => setStatusFilter('all')} className={`chatos-view-tab${statusFilter === 'all' ? ' is-active' : ''}`}>全部</button>
+            <button id="lib-status-pending" type="button" role="tab" aria-selected={statusFilter === 'pending'} onClick={() => setStatusFilter('pending')} className={`chatos-view-tab${statusFilter === 'pending' ? ' is-active' : ''}`}>待处理</button>
           </div>
         </div>
+      </section>
+
+      <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3" aria-label="本地资料库统计">
+        <div className="min-w-0 border-b border-white/10 pb-4 xl:border-b-0 xl:border-r xl:pr-6">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <h3 className="text-sm font-medium text-slate-200">按类型</h3>
+            <span className="text-[11px] text-slate-500">{filteredItems.length} 条</span>
+          </div>
+          <div className="mt-2" role="list" aria-label="按类型统计">
+            {typeStats.map(row => (
+              <div key={row.key} role="listitem" className="flex min-h-10 items-center justify-between border-b border-white/5 text-xs">
+                <span className="text-slate-400">{row.label}</span>
+                <span className="font-medium text-slate-200">{row.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-w-0 border-b border-white/10 pb-4 xl:border-b-0 xl:border-r xl:pr-6">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <h3 className="text-sm font-medium text-slate-200">按会话</h3>
+            <span className="text-[11px] text-slate-500">共 {new Set(filteredItems.map(item => item.sourceConversationId)).size} 个</span>
+          </div>
+          <div className="mt-2" role="list" aria-label="按会话统计">
+            {conversationStats.length > 0 ? conversationStats.map(row => (
+              <div key={row.id} role="listitem" className="flex min-h-10 items-center justify-between gap-4 border-b border-white/5 text-xs">
+                <span className="truncate text-slate-400" title={row.name}>{row.name}</span>
+                <span className="shrink-0 font-medium text-slate-200">{row.count}</span>
+              </div>
+            )) : <p className="py-5 text-xs text-slate-500">暂无匹配会话</p>}
+          </div>
+        </div>
+
+        <div className="min-w-0 pb-4">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <h3 className="text-sm font-medium text-slate-200">按项目</h3>
+            <span className="text-[11px] text-slate-500">统计关联资料</span>
+          </div>
+          <div className="mt-2" role="list" aria-label="按项目统计">
+            {projectStats.length > 0 ? projectStats.map(row => (
+              <div key={row.id} role="listitem" className="flex min-h-10 items-center justify-between gap-4 border-b border-white/5 text-xs">
+                <span className="truncate text-slate-400" title={row.name}>{row.name}</span>
+                <span className="shrink-0 font-medium text-slate-200">{row.count}</span>
+              </div>
+            )) : <p className="py-5 text-xs text-slate-500">暂无项目关联</p>}
+          </div>
+        </div>
+      </section>
+
+      {filteredItems.length === 0 && (
+        <div className="py-10 text-center text-sm text-slate-500">{
+          knowledgeDataStatus === 'loading'
+            ? '正在读取本地资料记录…'
+            : knowledgeDataStatus === 'unavailable'
+              ? '本地资料接口暂不可用，没有使用演示数据替代'
+              : knowledgeItems.length
+                ? '没有符合当前筛选的资料'
+                : '尚无可展示的真实资料记录'
+        }</div>
       )}
     </div>
   );

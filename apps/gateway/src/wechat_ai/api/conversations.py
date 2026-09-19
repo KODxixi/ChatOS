@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
+import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, FastAPI, Query, Request
+from fastapi import APIRouter, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -19,6 +21,7 @@ from ..services import message_cleaning as mc
 from ..services.conversation_service import (
     ConnectionFactory,
     ConversationNotFound,
+    ConversationGroupNotFound,
     InvalidCursor,
     MessageNotFound,
     get_conversation,
@@ -48,7 +51,32 @@ class ConversationResponse(BaseModel):
     projectId: str | None = None
     projectRole: str | None = None
     classificationStatus: str | None = None
+    groupId: str | None = None
     note: str
+
+
+class ConversationGroupCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=12)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("name is required")
+        return normalized
+
+
+class ConversationGroupResponse(BaseModel):
+    id: str
+    name: str
+    count: int
+
+
+class ConversationGroupPage(BaseModel):
+    items: list[ConversationGroupResponse]
 
 
 class MediaDerivativeResponse(BaseModel):
@@ -132,6 +160,12 @@ class ConversationPatch(BaseModel):
     isArchived: bool | None = None
     isIndexingEnabled: bool | None = None
     note: str | None = Field(default=None, max_length=20_000)
+    groupId: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
     @field_validator(
         "isFavorite",
@@ -166,6 +200,74 @@ def create_conversations_router(
     asset_root: Path | None = None,
 ) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/conversation-groups", response_model=ConversationGroupPage)
+    def conversation_groups() -> dict[str, object]:
+        with closing(connection_factory()) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                """
+                SELECT g.id, g.name, COUNT(o.conversation_id) AS count
+                FROM conversation_groups g
+                LEFT JOIN conversation_overrides o ON o.group_id = g.id
+                GROUP BY g.id, g.name, g.sort_order, g.created_at
+                ORDER BY g.sort_order, g.created_at, g.id
+                """
+            ).fetchall()
+            return {"items": [dict(row) for row in rows]}
+
+    @router.post(
+        "/conversation-groups",
+        response_model=ConversationGroupResponse,
+        status_code=201,
+    )
+    def create_conversation_group(
+        payload: ConversationGroupCreate,
+    ) -> dict[str, object] | JSONResponse:
+        group_id = f"group-{uuid.uuid4().hex[:12]}"
+        now = int(time.time() * 1000)
+        try:
+            with closing(connection_factory()) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO conversation_groups (id, name, sort_order, created_at, updated_at)
+                    VALUES (?, ?, 100, ?, ?)
+                    """,
+                    (group_id, payload.name, now, now),
+                )
+                connection.commit()
+        except sqlite3.IntegrityError:
+            return api_error_response(
+                status_code=409,
+                code="CONVERSATION_GROUP_EXISTS",
+                message="同名会话分组已存在。",
+            )
+        return {"id": group_id, "name": payload.name, "count": 0}
+
+    @router.delete(
+        "/conversation-groups/{group_id}",
+        status_code=204,
+        response_model=None,
+    )
+    def delete_conversation_group(group_id: str) -> Response | JSONResponse:
+        with closing(connection_factory()) as connection:
+            if connection.execute(
+                "SELECT 1 FROM conversation_groups WHERE id = ?",
+                (group_id,),
+            ).fetchone() is None:
+                return api_error_response(
+                    status_code=404,
+                    code="CONVERSATION_GROUP_NOT_FOUND",
+                    message="未找到会话分组。",
+                )
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            connection.execute(
+                "UPDATE conversation_overrides SET group_id = NULL, updated_at = ? WHERE group_id = ?",
+                (now_iso, group_id),
+            )
+            connection.execute("DELETE FROM conversation_groups WHERE id = ?", (group_id,))
+            connection.commit()
+        return Response(status_code=204)
 
     @router.get("/conversations", response_model=ConversationPage)
     def conversations(
@@ -407,6 +509,12 @@ def create_conversations_router(
                 )
         except ConversationNotFound:
             return _not_found_response()
+        except ConversationGroupNotFound:
+            return api_error_response(
+                status_code=404,
+                code="CONVERSATION_GROUP_NOT_FOUND",
+                message="未找到会话分组。",
+            )
 
     @router.get(
         "/conversations/{conversation_id}/messages",
@@ -583,7 +691,7 @@ def create_conversations_router(
 
             rows = connection.execute(
                 """
-                SELECT sender_name, sender_id, sent_at, type, content
+                SELECT id, sender_name, sender_id, sent_at, type, content
                 FROM messages
                 WHERE conversation_id = ?
                   AND type = 'text'
@@ -638,6 +746,38 @@ def create_conversations_router(
                 return bool(mc.QUESTION_TAIL_RE.search(body)
                             or mc.MID_QUESTION_RE.search(body)
                             or _re.search(r"[?？]", body))
+
+            # Keep ten compact, source-backed evidence extracts for the recent
+            # inference.  Rank meaningful messages first, then use recency as
+            # the stable tie-breaker; never manufacture rows to reach ten.
+            important_ranked: list[tuple[int, int, dict[str, Any]]] = []
+            seen_extracts: set[str] = set()
+            for recency, r in enumerate(rows):
+                body = mc.strip_mentions(r["content"] or "")
+                body = mc.clean_summary_body(body)
+                body = mc.ACTION_NOISE_RE.sub("", body)
+                body = mc.URL_RE.sub("", body).strip(" ，。、;；")
+                if len(body) < 4 or mc.is_filler(body):
+                    continue
+                if mc.SYSTEM_INVITE_RE.search(body):
+                    continue
+                excerpt = mc.truncate(body, 120)
+                if excerpt in seen_extracts:
+                    continue
+                seen_extracts.add(excerpt)
+                importance = _score(body) - (2 if _is_question(body) else 0)
+                important_ranked.append((
+                    importance,
+                    recency,
+                    {
+                        "messageId": r["id"],
+                        "senderName": (r["sender_name"] or "未知联系人").strip(),
+                        "sentAt": r["sent_at"],
+                        "content": excerpt,
+                    },
+                ))
+            important_ranked.sort(key=lambda item: (-item[0], item[1]))
+            important_messages = [item[2] for item in important_ranked[:10]]
 
             decl = [(b, _score(b)) for b, _l in candidates if not _is_question(b)]
             decl.sort(key=lambda cb: -cb[1])
@@ -885,13 +1025,14 @@ def create_conversations_router(
             )
             links = {"count": len(link_map), "recent": links_sorted[:3]}
 
-            # media count: image/voice/video
+            # media count: image/voice/video/attachment; the UI needs type records
+            # even when the source asset cannot be opened locally.
             media_counts: dict[str, int] = {}
             for r in connection.execute(
                 """
                 SELECT type, COUNT(*) AS c
                 FROM messages
-                WHERE conversation_id = ? AND type IN ('image','voice','video')
+                WHERE conversation_id = ? AND type IN ('image','voice','video','attachment')
                 GROUP BY type
                 """,
                 (conversation_id,),
@@ -908,6 +1049,7 @@ def create_conversations_router(
         return {
             "conversationId": conversation_id,
             "summary": summary,
+            "importantMessages": important_messages,
             "keyPeople": key_people,
             "keyTopics": key_topics,
             "keyDates": key_dates,
@@ -948,14 +1090,33 @@ def create_conversations_router(
             rows = connection.execute(
                 f"""
                 SELECT m.id, m.type, m.content, m.sender_name, m.sent_at,
-                       a.file_name, a.byte_size, a.local_path, a.status AS asset_status,
-                       a.id AS asset_id
+                       (SELECT a.file_name
+                          FROM message_parts mp
+                          JOIN assets a ON a.part_id = mp.id
+                         WHERE mp.message_id = m.id
+                         ORDER BY a.id LIMIT 1) AS file_name,
+                       (SELECT a.byte_size
+                          FROM message_parts mp
+                          JOIN assets a ON a.part_id = mp.id
+                         WHERE mp.message_id = m.id
+                         ORDER BY a.id LIMIT 1) AS byte_size,
+                       (SELECT a.local_path
+                          FROM message_parts mp
+                          JOIN assets a ON a.part_id = mp.id
+                         WHERE mp.message_id = m.id
+                         ORDER BY a.id LIMIT 1) AS local_path,
+                       (SELECT a.status
+                          FROM message_parts mp
+                          JOIN assets a ON a.part_id = mp.id
+                         WHERE mp.message_id = m.id
+                         ORDER BY a.id LIMIT 1) AS asset_status,
+                       (SELECT a.id
+                          FROM message_parts mp
+                          JOIN assets a ON a.part_id = mp.id
+                         WHERE mp.message_id = m.id
+                         ORDER BY a.id LIMIT 1) AS asset_id
                 FROM messages m
-                JOIN message_parts mp ON mp.message_id = m.id
-                JOIN assets a ON a.part_id = mp.id
                 WHERE m.conversation_id = ? AND m.type IN ({placeholders})
-                  AND a.status = 'resolved'
-                  AND a.local_path IS NOT NULL AND a.local_path != ''
                 ORDER BY m.sent_at DESC
                 LIMIT ?
                 """,

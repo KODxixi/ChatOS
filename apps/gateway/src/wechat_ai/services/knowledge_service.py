@@ -4,11 +4,46 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .conversation_service import InvalidCursor, decode_cursor, encode_cursor
 
 
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_SENSITIVE_CONTENT = re.compile(
+    r"(?:access[_-]?token|session[_-]?token|api[_-]?key|authorization\s*[:=]\s*bearer|"
+    r"client[_-]?secret|private[_-]?key|password|passwd|密码|do not share any part)",
+    re.IGNORECASE,
+)
+_SENSITIVE_QUERY_KEY = re.compile(
+    r"(?:token|key|secret|auth|session|password|passwd|code)", re.IGNORECASE
+)
+_SENSITIVE_PLACEHOLDER = "疑似敏感内容，已隐藏"
+
+
+def safe_knowledge_text(kind: str, text: str, *, for_index: bool = False) -> str:
+    """Keep credentials out of derived views/indexes while preserving source IDs."""
+    value = text.strip()
+    if not value:
+        return ""
+    if _SENSITIVE_CONTENT.search(value):
+        return "" if for_index else _SENSITIVE_PLACEHOLDER
+    if kind != "link":
+        return value
+    urls = []
+    for raw_url in _URL_PATTERN.findall(value)[:5]:
+        parsed = urlsplit(raw_url.rstrip(".,;:!?，。；：！？)）]】"))
+        query = urlencode(
+            [
+                (key, "[redacted]" if _SENSITIVE_QUERY_KEY.search(key) else query_value)
+                for key, query_value in parse_qsl(parsed.query, keep_blank_values=True)
+            ]
+        )
+        urls.append(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, "")))
+    if urls:
+        return "\n".join(urls)
+    return "" if for_index else "[链接]"
 
 
 class InvalidKnowledgeQuery(ValueError):
@@ -373,7 +408,9 @@ def list_knowledge_items(
                 "sentAt": int(row["sent_at"]),
                 "kind": str(row["kind"]),
                 "status": str(row["status"]),
-                "text": str(row["text_content"]),
+                "text": safe_knowledge_text(
+                    str(row["kind"]), str(row["text_content"])
+                ),
                 "assets": assets_by_part.get(int(row["part_id"]), []),
             }
             for row in page_rows

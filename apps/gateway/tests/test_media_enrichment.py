@@ -288,6 +288,16 @@ def test_media_batch_followup_requires_progress_and_remaining_work() -> None:
     assert _media_followup_needed(
         MediaEnrichmentResult(has_more=True, errors=1)
     ) is False
+    assert _media_followup_needed(
+        MediaEnrichmentResult(),
+        cached_images_resolved=1,
+        cached_images_remaining=True,
+    ) is True
+    assert _media_followup_needed(
+        MediaEnrichmentResult(),
+        cached_images_resolved=0,
+        cached_images_remaining=True,
+    ) is False
 
 
 def test_media_job_merges_document_and_media_progress() -> None:

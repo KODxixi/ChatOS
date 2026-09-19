@@ -43,6 +43,14 @@ assert.ok(conversations.total > 0, 'local database must return user conversation
 assert.equal(conversations.items.length, conversations.total);
 assert.ok(conversations.items.every(item => item.name && typeof item.isGroup === 'boolean'));
 assert.ok(
+  conversations.items.some(item => typeof item.avatar === 'string' && item.avatar.startsWith('https://')),
+  'live conversations must include source-backed WeChat avatar URLs'
+);
+assert.ok(
+  conversations.items.filter(item => item.isGroup).some(item => item.groupParticipants?.some(participant => participant.avatar?.startsWith('https://'))),
+  'group participants must include source-backed WeChat avatar URLs'
+);
+assert.ok(
   conversations.items.filter(item => item.isGroup).every(item => item.groupTopic && item.groupTopic !== '个人关系'),
   'group conversations must use group semantics instead of a direct-contact label'
 );

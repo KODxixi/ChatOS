@@ -1,4 +1,4 @@
-export type WorkspaceType = 'conversations' | 'todos' | 'projects' | 'library' | 'mindmap';
+export type WorkspaceType = 'today' | 'conversations' | 'todos' | 'projects' | 'library' | 'mindmap';
 
 export type MindMapNodeType = 'conversation' | 'project' | 'todo' | 'knowledge' | 'person' | 'topic' | 'date';
 
@@ -207,9 +207,10 @@ export interface KnowledgeItem {
   id: string;
   title: string;
   fileName: string;
-  fileType: 'image' | 'pdf' | 'doc' | 'code' | 'archive';
+  fileType: 'image' | 'pdf' | 'doc' | 'code' | 'archive' | 'audio' | 'video' | 'link';
   fileSize: string;
   thumbnailUrl?: string;
+  mediaUrl?: string;
   contentHash: string;
   intakeStatus: IntakeStatus;
   sourceConversationId: string;
@@ -243,6 +244,22 @@ export interface Conversation {
   priorityReason: string;
   categoryTag: 'active_collab' | 'family_core' | 'low_freq_important' | 'noisy_group' | 'general';
   linkedProjectIds: string[];
+  isArchived?: boolean;
+  groupId?: string | null;
+}
+
+export interface KnowledgeIndexStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'interrupted';
+  stage: 'idle' | 'archive' | 'vectorize' | 'ready';
+  stats: Record<string, number>;
+  error: string | null;
+  updatedAt: number | null;
+}
+
+export interface ConversationGroup {
+  id: string;
+  name: string;
+  count: number;
 }
 
 export interface Project {

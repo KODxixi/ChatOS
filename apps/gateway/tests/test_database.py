@@ -51,6 +51,7 @@ class DatabaseTests(unittest.TestCase):
                         "message_parts",
                         "retrieval_chunks",
                         "retrieval_chunk_fts",
+                        "conversation_groups",
                     }
                     <= tables
                 )
@@ -66,7 +67,7 @@ class DatabaseTests(unittest.TestCase):
                     connection.execute(
                         "SELECT value FROM app_meta WHERE key = 'schema_version'"
                     ).fetchone()[0],
-                        "20",
+                        "21",
                 )
 
     def test_initialize_database_is_idempotent_and_preserves_local_data(self) -> None:
@@ -172,7 +173,7 @@ class DatabaseTests(unittest.TestCase):
                     upgraded.execute(
                         "SELECT value FROM app_meta WHERE key = 'schema_version'"
                     ).fetchone()[0],
-                    "20",
+                    "21",
                 )
                 self.assertEqual(
                     tuple(

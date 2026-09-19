@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 
@@ -248,6 +249,204 @@ def test_decodes_wechat_v2_aes_raw_and_xor_sections() -> None:
         )
         is None
     )
+
+
+def test_resolves_cached_wechat_v2_image_without_network(tmp_path: Path) -> None:
+    from wechat_ai.database import initialize_database
+    from wechat_ai.wechat_db import resolve_cached_image_assets
+
+    encrypted = (
+        bytes.fromhex("070856320807")
+        + (20).to_bytes(4, "little")
+        + (2).to_bytes(4, "little")
+        + b"\x01"
+        + bytes.fromhex(
+            "d4e12999441d072c1c9ee54e5c19bddb"
+            "c5f3adacf6c1f635b766158a6251cd7a"
+        )
+        + b"raw-middle"
+        + bytes((0xFF ^ 0x5A, 0xD9 ^ 0x5A))
+    )
+    expected = (
+        bytes.fromhex("ffd8ffe000104a46494600010203040506070809")
+        + b"raw-middle"
+        + bytes.fromhex("ffd9")
+    )
+    database_path = tmp_path / "library.sqlite"
+    asset_root = tmp_path / "assets"
+    asset_root.mkdir()
+    encrypted_path = asset_root / hashlib.sha256(encrypted).hexdigest()
+    encrypted_path.write_bytes(encrypted)
+
+    connection = initialize_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO conversations(
+            id, source_conversation_id, title, kind, message_count
+        ) VALUES ('conversation-1', 'conversation-1', 'Media', 'direct', 1)
+        """
+    )
+    message = connection.execute(
+        """
+        INSERT INTO messages(
+            conversation_id, dedupe_key, sender_name, sent_at, type, content
+        ) VALUES ('conversation-1', 'image-1', 'Alice', 1, 'image', '')
+        """
+    )
+    part = connection.execute(
+        """
+        INSERT INTO message_parts(message_id, ordinal, kind, status)
+        VALUES (?, 0, 'image', 'unresolved')
+        """,
+        (message.lastrowid,),
+    )
+    connection.execute(
+        """
+        INSERT INTO assets(
+            part_id, ordinal, kind, status, file_name, mime_type,
+            local_path, sha256
+        ) VALUES (?, 0, 'image', 'unresolved', 'image.dat',
+                  'application/x-wechat-image-v2', ?, ?)
+        """,
+        (part.lastrowid, encrypted_path.name, encrypted_path.name),
+    )
+    connection.commit()
+
+    resolved, has_more = resolve_cached_image_assets(
+        connection,
+        asset_root=asset_root,
+        image_keys=((b"0123456789abcdef", 0x5A),),
+        limit=10,
+    )
+    row = connection.execute(
+        """
+        SELECT assets.status, assets.file_name, assets.mime_type,
+               assets.local_path, message_parts.status AS part_status
+        FROM assets
+        JOIN message_parts ON message_parts.id = assets.part_id
+        """
+    ).fetchone()
+    connection.close()
+
+    assert resolved == 1
+    assert has_more is False
+    assert tuple(row)[:3] == ("resolved", "image.jpg", "image/jpeg")
+    assert row["part_status"] == "resolved"
+    assert (asset_root / row["local_path"]).read_bytes() == expected
+
+
+def test_cached_image_resolution_prefers_local_high_quality_variant(
+    tmp_path: Path,
+) -> None:
+    from wechat_ai.database import initialize_database
+    from wechat_ai.wechat_db import resolve_cached_image_assets
+
+    encrypted_jpeg = (
+        bytes.fromhex("070856320807")
+        + (20).to_bytes(4, "little")
+        + (2).to_bytes(4, "little")
+        + b"\x01"
+        + bytes.fromhex(
+            "d4e12999441d072c1c9ee54e5c19bddb"
+            "c5f3adacf6c1f635b766158a6251cd7a"
+        )
+        + b"raw-middle"
+        + bytes((0xFF ^ 0x5A, 0xD9 ^ 0x5A))
+    )
+    invalid_base = bytes.fromhex("070856320807") + b"\x00" * 32
+    conversation_hash = "a" * 32
+    media_key = "b" * 32
+    sent_at = 1_720_000_000_000
+    month = datetime.fromtimestamp(sent_at // 1000).strftime("%Y-%m")
+    media_root = tmp_path / "attach"
+    image_dir = media_root / conversation_hash / month / "Img"
+    image_dir.mkdir(parents=True)
+    (image_dir / f"{media_key}.dat").write_bytes(invalid_base)
+    (image_dir / f"{media_key}_h.dat").write_bytes(encrypted_jpeg)
+
+    database_path = tmp_path / "library.sqlite"
+    asset_root = tmp_path / "assets"
+    asset_root.mkdir()
+    cached = asset_root / hashlib.sha256(invalid_base).hexdigest()
+    cached.write_bytes(invalid_base)
+    connection = initialize_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO conversations(
+            id, source_conversation_id, title, kind, message_count
+        ) VALUES ('conversation-1', 'conversation-1', 'Media', 'direct', 2)
+        """
+    )
+    blocker_message = connection.execute(
+        """
+        INSERT INTO messages(
+            conversation_id, dedupe_key, sender_name, sent_at, type, content
+        ) VALUES ('conversation-1', ?, 'Alice', ?, 'image', '')
+        """,
+        (f"shard:Msg_{'c' * 32}:server:0", sent_at),
+    )
+    blocker_part = connection.execute(
+        """
+        INSERT INTO message_parts(message_id, ordinal, kind, status)
+        VALUES (?, 0, 'image', 'unresolved')
+        """,
+        (blocker_message.lastrowid,),
+    )
+    connection.execute(
+        """
+        INSERT INTO assets(
+            part_id, ordinal, kind, status, file_name, mime_type,
+            local_path, sha256, metadata_json
+        ) VALUES (?, 0, 'image', 'unresolved', ?,
+                  'application/x-wechat-image-v2', ?, ?,
+                  '{"previewable":false}')
+        """,
+        (blocker_part.lastrowid, f"{'d' * 32}.dat", cached.name, cached.name),
+    )
+    message = connection.execute(
+        """
+        INSERT INTO messages(
+            conversation_id, dedupe_key, sender_name, sent_at, type, content
+        ) VALUES ('conversation-1', ?, 'Alice', ?, 'image', '')
+        """,
+        (f"shard:Msg_{conversation_hash}:server:1", sent_at),
+    )
+    part = connection.execute(
+        """
+        INSERT INTO message_parts(message_id, ordinal, kind, status)
+        VALUES (?, 0, 'image', 'unresolved')
+        """,
+        (message.lastrowid,),
+    )
+    connection.execute(
+        """
+        INSERT INTO assets(
+            part_id, ordinal, kind, status, file_name, mime_type,
+            local_path, sha256
+        ) VALUES (?, 0, 'image', 'unresolved', ?,
+                  'application/x-wechat-image-v2', ?, ?)
+        """,
+        (part.lastrowid, f"{media_key}.dat", cached.name, cached.name),
+    )
+    connection.commit()
+
+    resolved, has_more = resolve_cached_image_assets(
+        connection,
+        asset_root=asset_root,
+        image_keys=((b"0123456789abcdef", 0x5A),),
+        media_root=media_root,
+        limit=1,
+    )
+    row = connection.execute(
+        "SELECT status, mime_type, local_path FROM assets WHERE file_name <> ?",
+        (f"{'d' * 32}.dat",),
+    ).fetchone()
+    connection.close()
+
+    assert resolved == 1
+    assert has_more is True
+    assert tuple(row)[:2] == ("resolved", "image/jpeg")
+    assert (asset_root / row["local_path"]).read_bytes().startswith(b"\xff\xd8\xff")
 
 
 def test_extracts_embedded_image_or_hevc_from_wxgf() -> None:

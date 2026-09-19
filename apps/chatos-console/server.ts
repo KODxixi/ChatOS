@@ -35,6 +35,86 @@ const localLlmIsLoopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(l
 
 const openLibraryDb = () => new DatabaseSync(libraryDbPath, { readOnly: true });
 
+type WechatAvatarSource = {
+  databasePath: string;
+  revision: string;
+  urls: Map<string, string>;
+};
+
+const decryptedSourceDir = path.join(repositoryRoot, 'apps', 'gateway', 'decrypted');
+const wechatAvatarHostSuffixes = ['.wechat.com', '.qlogo.cn', '.qpic.cn', '.weixin.qq.com'];
+let cachedWechatAvatarSource: WechatAvatarSource | null = null;
+
+const normalizeWechatAvatarUrl = (value: unknown) => {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || !wechatAvatarHostSuffixes.some(suffix => hostname.endsWith(suffix))) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const findWechatContactDatabase = () => {
+  if (!fs.existsSync(decryptedSourceDir)) return null;
+  for (const file of fs.readdirSync(decryptedSourceDir).filter(name => name.endsWith('.db')).sort()) {
+    const databasePath = path.join(decryptedSourceDir, file);
+    let database: DatabaseSync | null = null;
+    try {
+      database = new DatabaseSync(databasePath, { readOnly: true });
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(contact)').all() as Array<{ name: string }>).map(column => column.name)
+      );
+      if (columns.has('username') && columns.has('small_head_url') && columns.has('big_head_url')) {
+        return databasePath;
+      }
+    } catch {
+      // A decrypted shard can be replaced while sources refresh; try the next one.
+    } finally {
+      database?.close();
+    }
+  }
+  return null;
+};
+
+const readWechatAvatarSource = (): WechatAvatarSource => {
+  try {
+    const databasePath = cachedWechatAvatarSource?.databasePath && fs.existsSync(cachedWechatAvatarSource.databasePath)
+      ? cachedWechatAvatarSource.databasePath
+      : findWechatContactDatabase();
+    if (!databasePath) throw new Error('wechat contact database unavailable');
+    const revision = String(fs.statSync(databasePath).mtimeMs);
+    if (cachedWechatAvatarSource?.databasePath === databasePath && cachedWechatAvatarSource.revision === revision) {
+      return cachedWechatAvatarSource;
+    }
+
+    const database = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      const urls = new Map<string, string>();
+      const rows = database.prepare(`
+        SELECT username,
+               COALESCE(NULLIF(small_head_url, ''), NULLIF(big_head_url, '')) AS avatar_url
+        FROM contact
+        WHERE COALESCE(small_head_url, big_head_url, '') != ''
+      `).all() as Array<{ username: string; avatar_url: string }>;
+      for (const row of rows) {
+        const url = normalizeWechatAvatarUrl(row.avatar_url);
+        if (row.username && url) urls.set(String(row.username), url);
+      }
+      cachedWechatAvatarSource = { databasePath, revision, urls };
+      return cachedWechatAvatarSource;
+    } finally {
+      database.close();
+    }
+  } catch {
+    return cachedWechatAvatarSource || { databasePath: '', revision: 'unavailable', urls: new Map() };
+  }
+};
+
 const databaseHealth = () => {
   try {
     const database = openLibraryDb();
@@ -77,10 +157,12 @@ const formatRelativeTime = (timestamp: number) => {
   return new Date(timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
 };
 
-const domainLabel = (domain: string | null) => ({
+const domainLabel = (domain: string | null, classificationStatus: string) => classificationStatus === 'needs_review'
+  ? '关系待判断'
+  : ({
   project: '项目协作',
-  work: '工作联系',
-  personal: '个人关系',
+  work: '工作协作',
+  personal: '亲友关系',
   service: '服务联系',
   subscription: '订阅会话',
 }[domain || ''] || '未分类会话');
@@ -93,8 +175,9 @@ const groupTopicLabel = (domain: string | null) => ({
   subscription: '订阅群聊',
 }[domain || ''] || '群聊讨论');
 
-const categoryFromDatabase = (domain: string | null, isGroup: boolean, indexingEnabled: boolean) => {
+const categoryFromDatabase = (domain: string | null, isGroup: boolean, indexingEnabled: boolean, classificationStatus: string) => {
   if (!indexingEnabled && isGroup) return 'noisy_group';
+  if (classificationStatus === 'needs_review') return 'general';
   if (domain === 'project' || domain === 'work') return 'active_collab';
   if (domain === 'personal') return 'family_core';
   if (domain === 'service') return 'low_freq_important';
@@ -105,6 +188,7 @@ const categoryFromDatabase = (domain: string | null, isGroup: boolean, indexingE
 const readConversationSnapshot = () => {
   const database = openLibraryDb();
   try {
+    const avatarSource = readWechatAvatarSource();
     // Deliberately do NOT identify "the owner" as the global most active
     // sender — that heuristic is wrong in shared group chats. Identity is
     // shown only from real sender_name/sender_id columns.
@@ -117,10 +201,13 @@ const readConversationSnapshot = () => {
     const rows = database.prepare(`
       SELECT c.id, c.title, c.kind, c.message_count, c.last_message_at,
              COALESCE(o.is_favorite, c.is_favorite, 0) AS is_favorite,
+             COALESCE(o.is_archived, c.is_archived, 0) AS is_archived,
              COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) AS is_indexing_enabled,
              COALESCE(o.domain, c.domain) AS domain,
              COALESCE(o.project_id, c.project_id) AS project_id,
              COALESCE(o.project_role, c.project_role) AS project_role,
+             COALESCE(o.classification_status, c.classification_status, 'needs_review') AS classification_status,
+             o.group_id AS group_id,
              COALESCE(o.updated_at, 0) AS override_updated_at
       FROM conversations c
       LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
@@ -196,8 +283,9 @@ const readConversationSnapshot = () => {
     `).all() as Record<string, unknown>[]).forEach(row => {
       const conversationId = String(row.conversation_id);
       const name = String(row.sender_name || '成员');
+      const senderId = String(row.sender_id || name);
       const current = participants.get(conversationId) || [];
-      current.push({ id: String(row.sender_id || name), name, avatar: avatarDataUri(name) });
+      current.push({ id: senderId, name, avatar: avatarSource.urls.get(senderId) || avatarDataUri(name) });
       participants.set(conversationId, current);
       memberCounts.set(conversationId, Number(row.member_count || current.length));
     });
@@ -210,6 +298,7 @@ const readConversationSnapshot = () => {
       const lastMessageAt = Number(row.last_message_at || 0);
       const indexingEnabled = Boolean(row.is_indexing_enabled);
       const domain = row.domain ? String(row.domain) : null;
+      const classificationStatus = String(row.classification_status || 'needs_review');
       const stats = recentStats.get(id);
       const interactionDays90d = Number(stats?.interaction_days || 0);
       const recentMessages = Number(stats?.recent_messages || 0);
@@ -239,12 +328,14 @@ const readConversationSnapshot = () => {
         id,
         name,
         isGroup,
-        avatar: avatarDataUri(name),
+        avatar: avatarSource.urls.get(id) || avatarDataUri(name),
         groupParticipants: isGroup ? participants.get(id) || [] : undefined,
         memberCount: isGroup ? memberCounts.get(id) || 2 : undefined,
-        roleTitle: isGroup ? undefined : String(row.project_role || domainLabel(domain)),
+        roleTitle: isGroup ? undefined : String(row.project_role || domainLabel(domain, classificationStatus)),
         groupTopic: isGroup ? groupTopicLabel(domain) : undefined,
         isFollowed: favorite,
+        isArchived: Boolean(row.is_archived),
+        groupId: row.group_id ? String(row.group_id) : null,
         interactionDays90d,
         joyBoyParticipationScore: participation,
         lastActiveTime: lastMessageAt > 0 ? formatRelativeTime(lastMessageAt) : '暂无消息时间',
@@ -270,7 +361,7 @@ const readConversationSnapshot = () => {
         } : undefined,
         priorityScore,
         priorityReason,
-        categoryTag: categoryFromDatabase(domain, isGroup, indexingEnabled),
+        categoryTag: categoryFromDatabase(domain, isGroup, indexingEnabled, classificationStatus),
         linkedProjectIds: row.project_id ? [String(row.project_id)] : [],
       };
     });
@@ -285,7 +376,7 @@ const readConversationSnapshot = () => {
     return {
       source: 'sqlite-readonly',
       total: items.length,
-      revision: `${newestMessage}:${Number(taskRevision?.updated_at || 0)}:${overrideRevision?.updated_at ?? 'none'}:${items.length}`,
+      revision: `${newestMessage}:${Number(taskRevision?.updated_at || 0)}:${overrideRevision?.updated_at ?? 'none'}:${avatarSource.revision}:${items.length}`,
       updatedAt: new Date().toISOString(),
       items,
     };
@@ -477,6 +568,7 @@ app.get('/api/conversations/:conversationId/messages', (req, res) => {
       `).all(req.params.conversationId, limit) as Record<string, unknown>[]).reverse();
     }
 
+    const avatarSource = readWechatAvatarSource();
     const items = rows.map(row => {
       const senderName = String(row.sender_name || '未知联系人');
       const senderId = row.sender_id != null && String(row.sender_id) !== ''
@@ -487,7 +579,7 @@ app.get('/api/conversations/:conversationId/messages', (req, res) => {
         conversationId: req.params.conversationId,
         senderId,
         senderName,
-        senderAvatar: avatarDataUri(senderName),
+        senderAvatar: avatarSource.urls.get(senderId) || avatarDataUri(senderName),
         content: String(row.content),
         timestamp: new Date(Number(row.sent_at || 0)).toLocaleString('zh-CN', {
           month: '2-digit',

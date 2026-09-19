@@ -64,12 +64,55 @@ _PERSONAL_PATTERNS = [
     r"婚礼", r"生日",
 ]
 
+_DIRECT_WORK_PATTERNS = [
+    *_PROJECT_PATTERNS, *_WORK_PATTERNS,
+    r"模型", r"数据", r"系统", r"网站", r"前端", r"后端",
+    r"开发", r"审批", r"业务", r"客户", r"合同", r"交付", r"图纸",
+]
+
+_DIRECT_PERSONAL_PATTERNS = [
+    *_PERSONAL_PATTERNS,
+    r"爸爸", r"妈妈", r"父母", r"老婆", r"老公", r"孩子", r"宝宝",
+    r"哥哥", r"姐姐", r"弟弟", r"妹妹", r"吾儿", r"家里", r"回家",
+    r"吃饭", r"睡觉", r"聚会",
+]
+
 # Compile patterns
 _PROJECT_RE = re.compile("|".join(_PROJECT_PATTERNS), re.IGNORECASE)
 _WORK_RE = re.compile("|".join(_WORK_PATTERNS), re.IGNORECASE)
 _SERVICE_RE = re.compile("|".join(_SERVICE_PATTERNS), re.IGNORECASE)
 _SUBSCRIPTION_RE = re.compile("|".join(_SUBSCRIPTION_PATTERNS), re.IGNORECASE)
 _PERSONAL_RE = re.compile("|".join(_PERSONAL_PATTERNS), re.IGNORECASE)
+_DIRECT_WORK_RE = re.compile("|".join(_DIRECT_WORK_PATTERNS), re.IGNORECASE)
+_DIRECT_PERSONAL_RE = re.compile("|".join(_DIRECT_PERSONAL_PATTERNS), re.IGNORECASE)
+
+
+def _signal_score(pattern: re.Pattern[str], title: str, content: str) -> int:
+    return (8 if pattern.search(title) else 0) + len(pattern.findall(content))
+
+
+def _classify_direct(title: str, sample_content: str) -> tuple[Domain, str]:
+    scores = (
+        ("service", _signal_score(_SERVICE_RE, title, sample_content)),
+        ("subscription", _signal_score(_SUBSCRIPTION_RE, title, sample_content)),
+        ("work", _signal_score(_DIRECT_WORK_RE, title, sample_content)),
+        ("personal", _signal_score(_DIRECT_PERSONAL_RE, title, sample_content)),
+    )
+    domain, score = max(scores, key=lambda item: item[1])
+    return (domain, "auto") if score >= 2 else ("personal", "needs_review")
+
+
+def _sample_recent_content(connection: sqlite3.Connection, conversation_id: str) -> str:
+    rows = connection.execute(
+        """
+        SELECT content FROM messages
+        WHERE conversation_id = ? AND type = 'text'
+          AND content IS NOT NULL AND length(trim(content)) > 1
+        ORDER BY sent_at DESC LIMIT 20
+        """,
+        (conversation_id,),
+    ).fetchall()
+    return " ".join(row["content"] or "" for row in rows)[:4000]
 
 
 def classify_conversation(
@@ -82,23 +125,19 @@ def classify_conversation(
 
     Returns (domain, project_role, classification_status).
     """
-    text = f"{title} {sample_content or ''}"
+    content = sample_content or ""
+    text = f"{title} {content}"
 
     # System/official accounts → subscription
     if kind == "system":
         return "subscription", None, "auto"
 
-    # Direct (1:1) chats are NEVER marked as "project" — project domain is
-    # reserved for group chats / multi-conversation projects. Direct chats
-    # are classified as personal / work / service / subscription only.
+    # Direct chats keep the existing domain taxonomy, but infer the relationship
+    # from repeated title/content signals instead of defaulting every contact to
+    # personal. Project language maps to work because project is group-only.
     if kind == "direct":
-        if _SERVICE_RE.search(text):
-            return "service", None, "auto"
-        if _SUBSCRIPTION_RE.search(text):
-            return "subscription", None, "auto"
-        if _WORK_RE.search(text):
-            return "work", None, "auto"
-        return "personal", None, "auto"
+        domain, status = _classify_direct(title, content)
+        return domain, None, status
 
     # Service patterns (strong signal, groups only)
     if _SERVICE_RE.search(text):
@@ -173,16 +212,7 @@ def classify_all(
         title = row["title"] or ""
         kind = row["kind"]
 
-        # Sample a few recent messages for content-based classification
-        sample = connection.execute(
-            """
-            SELECT content FROM messages
-            WHERE conversation_id = ? AND content IS NOT NULL
-            ORDER BY sent_at DESC LIMIT 3
-            """,
-            (conv_id,),
-        ).fetchall()
-        sample_text = " ".join(r["content"] or "" for r in sample)[:500]
+        sample_text = _sample_recent_content(connection, conv_id)
 
         domain, role, status = classify_conversation(
             title, kind, sample_content=sample_text or None,
@@ -270,15 +300,7 @@ def classify_all_overrides(
         title = row["title"] or ""
         kind = row["kind"]
 
-        sample = connection.execute(
-            """
-            SELECT content FROM messages
-            WHERE conversation_id = ? AND content IS NOT NULL
-            ORDER BY sent_at DESC LIMIT 3
-            """,
-            (conv_id,),
-        ).fetchall()
-        sample_text = " ".join(r["content"] or "" for r in sample)[:500]
+        sample_text = _sample_recent_content(connection, conv_id)
 
         domain, role, status = classify_conversation(
             title, kind, sample_content=sample_text or None,

@@ -5,7 +5,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
 
 from ..services.conversation_service import ConnectionFactory, InvalidCursor
@@ -15,6 +15,7 @@ from ..services.knowledge_service import (
     list_knowledge_items,
     list_knowledge_spaces,
 )
+from ..services.local_knowledge_index import LocalKnowledgeIndex
 from ..wechat_media import add_media_readiness
 from .conversations import api_error_response
 
@@ -23,8 +24,15 @@ def create_knowledge_router(
     connection_factory: ConnectionFactory,
     *,
     asset_root: Path | None = None,
+    local_index: LocalKnowledgeIndex | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    library_root = asset_root.parent if asset_root is not None else None
+    index = local_index or (
+        LocalKnowledgeIndex.default(library_root)
+        if library_root is not None
+        else None
+    )
 
     @router.get("/knowledge/facets")
     def facets() -> dict[str, Any]:
@@ -94,7 +102,6 @@ def create_knowledge_router(
     def archive_knowledge() -> dict[str, Any]:
         """Trigger file + link archival into the local library tree."""
         from ..services.knowledge_archiver import archive_library
-        library_root = asset_root.parent if asset_root is not None else None
         if library_root is None:
             return api_error_response(
                 status_code=500, code="NO_ASSET_ROOT",
@@ -106,5 +113,27 @@ def create_knowledge_router(
             asset_root=asset_root,
         )
         return {"ok": True, "stats": stats}
+
+    @router.get("/knowledge/index/status", response_model=None)
+    def index_status() -> dict[str, Any] | JSONResponse:
+        if index is None:
+            return api_error_response(
+                status_code=503,
+                code="KNOWLEDGE_INDEX_UNAVAILABLE",
+                message="Knowledge index root is not configured.",
+            )
+        return index.status()
+
+    @router.post("/knowledge/index/start", status_code=202, response_model=None)
+    def start_index(background_tasks: BackgroundTasks) -> dict[str, Any] | JSONResponse:
+        if index is None:
+            return api_error_response(
+                status_code=503,
+                code="KNOWLEDGE_INDEX_UNAVAILABLE",
+                message="Knowledge index root is not configured.",
+            )
+        if index.start():
+            background_tasks.add_task(index.refresh, connection_factory, asset_root=asset_root)
+        return index.status()
 
     return router

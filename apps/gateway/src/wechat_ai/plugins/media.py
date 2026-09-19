@@ -15,6 +15,8 @@ from ..services.media_enrichment_service import (
     MediaEnrichmentResult,
     MediaEnrichmentService,
 )
+from ..wechat_db import resolve_cached_image_assets
+from ..wechat_media import discover_v2_image_keys
 
 
 def apply(ctx) -> None:
@@ -31,11 +33,29 @@ def apply(ctx) -> None:
 
     def run_media_job(_job: object, _context: object) -> JobResult:
         with closing(ctx.get("db.connection_factory")()) as media_connection:
+            image_keys = (
+                discover_v2_image_keys(settings.wechat_media_root)
+                if settings.wechat_media_root is not None
+                else ()
+            )
+            cached_images_resolved, cached_images_remaining = (
+                resolve_cached_image_assets(
+                    media_connection,
+                    asset_root=settings.asset_dir,
+                    image_keys=image_keys,
+                    media_root=settings.wechat_media_root,
+                    limit=100,
+                )
+            )
             media_result = media_service.enrich_pending(media_connection)
             document_result = document_service.enrich_pending(media_connection)
         result = merge_enrichment_results(media_result, document_result)
         jobs = ctx.get("jobs.service")
-        if media_followup_needed(result):
+        if media_followup_needed(
+            result,
+            cached_images_resolved=cached_images_resolved,
+            cached_images_remaining=cached_images_remaining,
+        ):
             jobs.create_job(
                 "media",
                 trigger_source="media",
@@ -64,10 +84,18 @@ def apply(ctx) -> None:
     ctx.get("jobs.registry")["media"] = run_media_job
 
 
-def media_followup_needed(result: MediaEnrichmentResult) -> bool:
+def media_followup_needed(
+    result: MediaEnrichmentResult,
+    *,
+    cached_images_resolved: int = 0,
+    cached_images_remaining: bool = False,
+) -> bool:
     return bool(
-        result.has_more
-        and (int(result.ready) + int(result.no_text) > 0)
+        (
+            result.has_more
+            and (int(result.ready) + int(result.no_text) > 0)
+        )
+        or (cached_images_resolved > 0 and cached_images_remaining)
     )
 
 

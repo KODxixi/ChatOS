@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { ChatOSProvider, useChatOS } from './context/ChatOSContext';
 import { Sidebar } from './components/Sidebar';
-import { Header } from './components/Header';
 import { ConversationsView } from './components/views/ConversationsView';
 import { TodosView } from './components/views/TodosView';
 import { ProjectsView } from './components/views/ProjectsView';
@@ -10,7 +9,6 @@ import { MindmapView } from './components/views/mindmap/MindmapView';
 import { RightDetailPanel } from './components/RightDetailPanel';
 import { CommandPalette } from './components/CommandPalette';
 import { AuxModals } from './components/AuxModals';
-import { CreateModal } from './components/CreateModal';
 import { ThinkingCopilotModal } from './components/ThinkingCopilotModal';
 import { CheckCircle, AlertCircle } from 'lucide-react';
 
@@ -18,7 +16,6 @@ const UNAVAILABLE_IMAGE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="
 
 const ChatOSMain: React.FC = () => {
   const { activeWorkspace, isInspectorOpen, toastMessage } = useChatOS();
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [isThinkingModalOpen, setIsThinkingModalOpen] = useState<boolean>(false);
 
   return (
@@ -42,19 +39,17 @@ const ChatOSMain: React.FC = () => {
     >
       <div className="gary-scene chatos-scene" data-gary-scene-engine="light-rays" aria-hidden="true" />
 
-      {/* 1. Left Sidebar (Collapsible, 4 Entry Points) */}
+      {/* 1. Left Sidebar */}
       <Sidebar onOpenThinking={() => setIsThinkingModalOpen(true)} />
 
       {/* 2. Central Workspace + Inspector */}
       <div className="chatos-content flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        {/* Workspace Header */}
-        <Header onOpenCreateModal={() => setIsCreateModalOpen(true)} />
-
         {/* Workspace Body: Center Grid/Board + Right Detail Inspector */}
         <div className="chatos-workspace-body flex-1 flex overflow-hidden relative">
           {/* Main Central Workspace */}
           <main className="chatos-main flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-[#0c1018]">
-            {activeWorkspace === 'conversations' && <ConversationsView />}
+            {activeWorkspace === 'today' && <ConversationsView mode="focus" />}
+            {activeWorkspace === 'conversations' && <ConversationsView mode="all" />}
             {activeWorkspace === 'todos' && <TodosView />}
             {activeWorkspace === 'projects' && <ProjectsView />}
             {activeWorkspace === 'library' && <LibraryView />}
@@ -84,7 +79,6 @@ const ChatOSMain: React.FC = () => {
       {/* Modals & Dialogs */}
       <CommandPalette />
       <AuxModals />
-      <CreateModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} />
       <ThinkingCopilotModal isOpen={isThinkingModalOpen} onClose={() => setIsThinkingModalOpen(false)} />
     </div>
   );

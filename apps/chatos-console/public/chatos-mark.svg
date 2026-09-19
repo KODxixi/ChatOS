@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">ChatOS</title>
+  <desc id="desc">开放的对话轨道与行动节点</desc>
+  <defs>
+    <linearGradient id="surface" x1="12" y1="8" x2="52" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202229"/>
+      <stop offset="0.52" stop-color="#111318"/>
+      <stop offset="1" stop-color="#090A0E"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="10" y1="8" x2="53" y2="57" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.48" stop-color="#FFFFFF" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#708BFF" stop-opacity="0.58"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="translate(45 48) rotate(-126) scale(30)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#536DFF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#536DFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="signal" x1="19" y1="18" x2="46" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE5FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="18" fill="url(#surface)"/>
+  <rect x="3" y="3" width="58" height="58" rx="18" fill="url(#aura)"/>
+  <rect x="3.5" y="3.5" width="57" height="57" rx="17.5" fill="none" stroke="url(#edge)"/>
+  <path d="M42.5 19.5A17 17 0 1 0 42.5 44.5" fill="none" stroke="url(#signal)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M23.5 42.5 18.5 49l9-4.1" fill="none" stroke="url(#signal)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="46" cy="32" r="4.75" fill="#7C9BFF"/>
+  <circle cx="46" cy="32" r="2" fill="#F7FAFF"/>
+</svg>

@@ -41,7 +41,7 @@ export const ProjectsView: React.FC = () => {
     showToast,
   } = useChatOS();
 
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'archived'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingProjectName, setEditingProjectName] = useState<string>('');
   const [isAddConvModalOpen, setIsAddConvModalOpen] = useState<boolean>(false);
@@ -49,8 +49,7 @@ export const ProjectsView: React.FC = () => {
 
   const filteredProjects = projects.filter(p => {
     if (activeTab === 'active') return p.status === 'active';
-    if (activeTab === 'archived') return p.status === 'archived';
-    return true;
+    return p.status === 'archived';
   });
 
   const handleStartRename = (proj: Project) => {
@@ -360,30 +359,26 @@ export const ProjectsView: React.FC = () => {
   // Projects Grid Overview
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto p-6 space-y-6">
-      {/* Filter Row */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      {/* One page-level tab row; project details stay inside each project. */}
+      <div className="chatos-view-tabbar-wrap flex items-center justify-between">
+        <div className="chatos-view-tabbar" role="tablist" aria-label="项目视图">
           <button
             id="proj-tab-active"
+            role="tab"
             onClick={() => setActiveTab('active')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              activeTab === 'active'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
+            aria-selected={activeTab === 'active'}
+            className={`chatos-view-tab${activeTab === 'active' ? ' is-active' : ''}`}
           >
-            进行中项目 ({projects.filter(p => p.status === 'active').length})
+            <span>进行中</span><span className="chatos-view-tab-count">{projects.filter(p => p.status === 'active').length}</span>
           </button>
           <button
             id="proj-tab-archived"
+            role="tab"
             onClick={() => setActiveTab('archived')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              activeTab === 'archived'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-[#151c2c] text-slate-300 hover:text-white border border-[#212c42]'
-            }`}
+            aria-selected={activeTab === 'archived'}
+            className={`chatos-view-tab${activeTab === 'archived' ? ' is-active' : ''}`}
           >
-            已归档 ({projects.filter(p => p.status === 'archived').length})
+            <span>已归档</span><span className="chatos-view-tab-count">{projects.filter(p => p.status === 'archived').length}</span>
           </button>
         </div>
 

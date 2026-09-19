@@ -923,6 +923,116 @@ def _resolve_wechat_media_source(
     return None
 
 
+def resolve_cached_image_assets(
+    connection: sqlite3.Connection,
+    *,
+    asset_root: str | Path,
+    image_keys: tuple[tuple[bytes, int], ...],
+    media_root: str | Path | None = None,
+    limit: int = 50,
+) -> tuple[int, bool]:
+    """Retry browser-image decoding from managed local files only."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    connection.row_factory = sqlite3.Row
+    root = Path(asset_root).resolve()
+    rows = connection.execute(
+        """
+        SELECT assets.id, assets.file_name, assets.local_path,
+               assets.metadata_json,
+               messages.dedupe_key, messages.sent_at
+        FROM assets
+        JOIN message_parts ON message_parts.id = assets.part_id
+        JOIN messages ON messages.id = message_parts.message_id
+        WHERE assets.kind = 'image'
+          AND assets.status <> 'resolved'
+          AND assets.local_path IS NOT NULL
+          AND assets.local_path <> ''
+          AND assets.ordinal = 0
+          AND message_parts.ordinal = 0
+        ORDER BY assets.id
+        """
+    ).fetchall()
+    if not rows or not image_keys:
+        return 0, bool(rows)
+
+    media_sources: dict[str, _MediaSource] = {}
+    asset_ids: list[int] = []
+    for row in rows:
+        if len(asset_ids) >= limit:
+            break
+        try:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+        except (TypeError, ValueError):
+            metadata = {}
+        known_unpreviewable = (
+            isinstance(metadata, dict)
+            and metadata.get("previewable") is False
+        )
+        candidate = (root / str(row["local_path"])).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        table_match = MESSAGE_TABLE_PATTERN.search(str(row["dedupe_key"]))
+        preferred_is_variant = False
+        if media_root is not None and table_match is not None:
+            media_key = Path(str(row["file_name"] or "")).stem
+            if media_key.endswith(("_h", "_t")):
+                media_key = media_key[:-2]
+            preferred = locate_image_dat_by_context(
+                media_root,
+                conversation_hash=table_match.group(0).removeprefix("Msg_"),
+                sent_at=row["sent_at"],
+                media_key=media_key,
+            )
+            if preferred is not None:
+                candidate = preferred
+                preferred_is_variant = preferred.name.casefold().endswith(
+                    ("_h.dat", "_t.dat")
+                )
+        if known_unpreviewable and not preferred_is_variant:
+            continue
+        media_sources[str(row["dedupe_key"])] = _MediaSource(
+            file_name=str(row["file_name"] or "image.dat"),
+            mime_type=None,
+            path=candidate,
+            require_browser_image=True,
+        )
+        asset_ids.append(int(row["id"]))
+
+    _materialize_media_assets(
+        connection,
+        media_sources,
+        asset_root=root,
+        image_keys=image_keys,
+    )
+    resolved = 0
+    if asset_ids:
+        placeholders = ",".join("?" for _item in asset_ids)
+        resolved = int(
+            connection.execute(
+                f"SELECT COUNT(*) FROM assets "
+                f"WHERE status = 'resolved' AND id IN ({placeholders})",
+                asset_ids,
+            ).fetchone()[0]
+        )
+    has_more = connection.execute(
+        """
+        SELECT 1
+        FROM assets
+        WHERE kind = 'image'
+          AND status <> 'resolved'
+          AND local_path IS NOT NULL
+          AND local_path <> ''
+        LIMIT 1
+        """
+    ).fetchone() is not None
+    return resolved, has_more
+
+
 def _materialize_media_assets(
     connection: sqlite3.Connection,
     media_sources: dict[str, _MediaSource],

@@ -90,14 +90,19 @@ test('failed images use one local fallback without a retry loop or false origina
   callback({ target: {} });
 });
 
-test('conversation workspace defaults to daily focus and keeps an explicit path to every conversation', () => {
+test('today and all conversations remain independent, keyboard-operable workspaces', () => {
   const source = readFileSync(new URL('../src/components/views/ConversationsView.tsx', import.meta.url), 'utf8');
   const sidebar = readFileSync(new URL('../src/components/Sidebar.tsx', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
-  assert.match(source, /useState<['"]focus['"]\s*\|\s*['"]all['"]>\(['"]focus['"]\)/);
   assert.match(source, /selectDailyFocusConversations\(conversations/);
-  assert.match(source, /id=['"]conversation-mode-focus['"]/);
-  assert.match(source, /id=['"]conversation-mode-all['"]/);
+  assert.match(source, /selectDailyPriorityConversations\(dailyFocusConversations/);
+  assert.match(app, /activeWorkspace === 'today'\s*&&\s*<ConversationsView mode="focus"/);
+  assert.match(app, /activeWorkspace === 'conversations'\s*&&\s*<ConversationsView mode="all"/);
+  assert.match(sidebar, /type:\s*'today'/);
+  assert.doesNotMatch(source, /id=['"]conversation-mode-(?:focus|all|starred)['"]/);
+  assert.match(source, /id="conversation-options-panel"/);
+  assert.doesNotMatch(source, /conversation-options-toggle/);
   assert.match(source, /workspaceMode\s*===\s*['"]all['"]\s*&&/);
   assert.doesNotMatch(source, /本地 Agent 聚焦|今日关注根据/);
   assert.match(source, /role="button"/);
@@ -105,7 +110,6 @@ test('conversation workspace defaults to daily focus and keeps an explicit path 
   assert.match(source, /onKeyDown=/);
   assert.match(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*0;/s);
   assert.doesNotMatch(css, /\.conversation-toolbar\s*\{[^}]*min-width:\s*56rem;/s);
-  assert.match(css, /\.conversation-type-tabs\.gary-segmented\s*>\s*button[^}]*min-height:\s*var\(--gary-control-height\)/s);
   assert.match(css, /@media\s*\(max-width:\s*767px\)[\s\S]*?\.conversation-toolbar\s*\{[^}]*flex-direction:\s*column/s);
-  assert.match(sidebar, /useState<boolean>\(false\)/);
+  assert.match(sidebar, /useState<['"]insights['"]\s*\|\s*['"]system['"]\s*\|\s*['"]view['"]\s*\|\s*null>\(null\)/);
 });

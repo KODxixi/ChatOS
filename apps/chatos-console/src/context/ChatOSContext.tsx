@@ -2,9 +2,11 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import {
   WorkspaceType,
   Conversation,
+  ConversationGroup,
   TodoItem,
   Project,
   KnowledgeItem,
+  KnowledgeIndexStatus,
   ChatMessage,
   AuditLogEntry,
   SystemEngineState,
@@ -25,13 +27,14 @@ import {
   INITIAL_CONVERSATIONS,
   INITIAL_TODOS,
   INITIAL_PROJECTS,
-  INITIAL_KNOWLEDGE_ITEMS,
   INITIAL_MESSAGES,
   INITIAL_AUDIT_LOGS,
   INITIAL_SHARED_LISTS,
   INITIAL_PROJECT_COMMENTS,
   generateScaleEnterpriseDirectory,
 } from '../mockData';
+import { getImportantConversationSignature } from '../core/conversationFeatureFilters';
+import { KNOWLEDGE_KINDS, mapGatewayKnowledgeItem, type GatewayKnowledgeItem } from '../core/knowledgeItems';
 
 interface ChatOSContextType {
   // Navigation & Workspace
@@ -39,6 +42,8 @@ interface ChatOSContextType {
   setActiveWorkspace: (w: WorkspaceType) => void;
   isSidebarCollapsed: boolean;
   setIsSidebarCollapsed: (v: boolean) => void;
+  isAlertMotionEnabled: boolean;
+  setIsAlertMotionEnabled: (enabled: boolean) => void;
 
   // Selected Entities & Inspector Panel
   selectedConversation: Conversation | null;
@@ -59,9 +64,20 @@ interface ChatOSContextType {
   conversationDataSource: 'loading' | 'database' | 'prototype';
   conversationDataUpdatedAt: string | null;
   conversationTotal: number;
+  conversationGroups: ConversationGroup[];
+  activeConversationGroupId: string;
+  setActiveConversationGroupId: (id: string) => void;
+  createConversationGroup: (name: string) => Promise<ConversationGroup | null>;
+  deleteConversationGroup: (id: string) => Promise<void>;
+  moveConversationToGroup: (conversationId: string, groupId: string) => Promise<void>;
+  seenImportantMessageSignatures: Record<string, string>;
+  acknowledgeImportantConversation: (conversation: Conversation) => void;
   todos: TodoItem[];
   projects: Project[];
   knowledgeItems: KnowledgeItem[];
+  knowledgeDataStatus: 'loading' | 'ready' | 'unavailable';
+  knowledgeIndexStatus: KnowledgeIndexStatus;
+  runKnowledgeIndex: () => Promise<void>;
   messages: Record<string, ChatMessage[]>;
   auditLogs: AuditLogEntry[];
   engineState: SystemEngineState;
@@ -132,10 +148,8 @@ interface ChatOSContextType {
   updateTodoStatus: (id: string, status: TodoStatus) => boolean;
   updateTodoDueDate: (id: string, newDate: string) => void;
   toggleIgnoreTodo: (id: string) => void;
-  createTodo: (newTodo: Partial<TodoItem>) => void;
   deleteTodo: (id: string) => void;
 
-  createProject: (name: string, currentAction: string, linkedConvIds: string[]) => void;
   renameProject: (id: string, newName: string) => void;
   archiveProject: (id: string) => void;
   linkConversationToProject: (projectId: string, convId: string) => void;
@@ -182,20 +196,52 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() =>
     window.matchMedia('(max-width: 767px)').matches
   );
+  const [isAlertMotionEnabled, setAlertMotionEnabled] = useState<boolean>(() => {
+    const saved = window.localStorage.getItem('chatos-alert-motion-enabled');
+    return saved === null
+      ? !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : saved === 'true';
+  });
+  const setIsAlertMotionEnabled = useCallback((enabled: boolean) => {
+    window.localStorage.setItem('chatos-alert-motion-enabled', String(enabled));
+    setAlertMotionEnabled(enabled);
+  }, []);
   const [enterpriseScale, setEnterpriseScaleState] = useState<'curated' | 'medium_120' | 'max_500'>('curated');
 
   const [conversations, setConversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
   const [conversationDataSource, setConversationDataSource] = useState<'loading' | 'database' | 'prototype'>('loading');
   const [conversationDataUpdatedAt, setConversationDataUpdatedAt] = useState<string | null>(null);
   const [conversationTotal, setConversationTotal] = useState<number>(INITIAL_CONVERSATIONS.length);
+  const [conversationGroups, setConversationGroups] = useState<ConversationGroup[]>([
+    { id: 'personal', name: '个人', count: 0 },
+    { id: 'work', name: '工作', count: 0 },
+    { id: 'study', name: '学习', count: 0 },
+  ]);
+  const [activeConversationGroupId, setActiveConversationGroupId] = useState('all');
+  const [seenImportantMessageSignatures, setSeenImportantMessageSignatures] = useState<Record<string, string>>(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem('chatos-seen-important-messages') || '{}');
+      return stored && typeof stored === 'object' ? stored : {};
+    } catch {
+      return {};
+    }
+  });
   const conversationRevisionRef = useRef<string | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>(INITIAL_TODOS);
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
-  const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>(INITIAL_KNOWLEDGE_ITEMS);
+  const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [knowledgeDataStatus, setKnowledgeDataStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [knowledgeIndexStatus, setKnowledgeIndexStatus] = useState<KnowledgeIndexStatus>({
+    status: 'idle',
+    stage: 'idle',
+    stats: {},
+    error: null,
+    updatedAt: null,
+  });
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(INITIAL_MESSAGES);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
 
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(INITIAL_CONVERSATIONS[0]);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedTodo, setSelectedTodo] = useState<TodoItem | null>(null);
   const [selectedKnowledgeItem, setSelectedKnowledgeItem] = useState<KnowledgeItem | null>(null);
@@ -219,6 +265,107 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setTimeout(() => {
       setToastMessage(prev => (prev === msg ? null : prev));
     }, 3800);
+  }, []);
+
+  useEffect(() => {
+    if (conversationDataSource !== 'database') return;
+    let active = true;
+    fetch('/api/gateway/conversation-groups', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (active && Array.isArray(data?.items)) setConversationGroups(data.items);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [conversationDataSource]);
+
+  const createConversationGroup = useCallback(async (name: string) => {
+    const normalized = name.trim();
+    if (!normalized) return null;
+    try {
+      const response = await fetch('/api/gateway/conversation-groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: normalized }),
+      });
+      if (!response.ok) throw new Error(`group create ${response.status}`);
+      const created = await response.json() as ConversationGroup;
+      setConversationGroups(previous => [...previous, created]);
+      showToast(`已创建分组「${created.name}」`);
+      return created;
+    } catch {
+      showToast('创建分组失败，名称可能已存在');
+      return null;
+    }
+  }, [showToast]);
+
+  const deleteConversationGroup = useCallback(async (id: string) => {
+    const previousGroups = conversationGroups;
+    const previousConversations = conversations;
+    const previousSelected = selectedConversation;
+    const previousActiveGroup = activeConversationGroupId;
+    setConversationGroups(groups => groups.filter(group => group.id !== id));
+    setConversations(items => items.map(item => item.groupId === id ? { ...item, groupId: null } : item));
+    setSelectedConversation(current => current?.groupId === id ? { ...current, groupId: null } : current);
+    if (activeConversationGroupId === id) setActiveConversationGroupId('all');
+    try {
+      const response = await fetch(`/api/gateway/conversation-groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(`group delete ${response.status}`);
+      showToast('会话分组已删除，会话已回到全部');
+    } catch {
+      setConversationGroups(previousGroups);
+      setConversations(previousConversations);
+      setSelectedConversation(previousSelected);
+      setActiveConversationGroupId(previousActiveGroup);
+      showToast('删除分组失败，已回滚');
+    }
+  }, [activeConversationGroupId, conversationGroups, conversations, selectedConversation, showToast]);
+
+  const moveConversationToGroup = useCallback(async (conversationId: string, groupId: string) => {
+    const previous = conversations.find(item => item.id === conversationId);
+    if (!previous) return;
+    const next = {
+      isFollowed: groupId === 'favorite' ? true : previous.isFollowed,
+      isArchived: groupId === 'archived' ? true : false,
+      groupId: ['all', 'favorite', 'archived'].includes(groupId) ? (groupId === 'all' ? null : previous.groupId ?? null) : groupId,
+    };
+    const patch = groupId === 'favorite'
+      ? { isFavorite: true, isArchived: false }
+      : groupId === 'archived'
+        ? { isArchived: true }
+        : groupId === 'all'
+          ? { groupId: null, isArchived: false }
+          : { groupId, isArchived: false };
+    const apply = (item: Conversation) => item.id === conversationId ? { ...item, ...next } : item;
+    setConversations(items => items.map(apply));
+    setSelectedConversation(current => current ? apply(current) : current);
+    try {
+      const response = await fetch(`/api/gateway/conversations/${encodeURIComponent(conversationId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok) throw new Error(`conversation move ${response.status}`);
+      showToast(groupId === 'favorite' ? '已加入收藏' : groupId === 'archived' ? '已归档会话' : groupId === 'all' ? '已移回全部会话' : '已移动会话分组');
+    } catch {
+      const rollback = (item: Conversation) => item.id === conversationId
+        ? { ...item, isFollowed: previous.isFollowed, isArchived: previous.isArchived, groupId: previous.groupId }
+        : item;
+      setConversations(items => items.map(rollback));
+      setSelectedConversation(current => current ? rollback(current) : current);
+      showToast('移动会话失败，已回滚');
+    }
+  }, [conversations, showToast]);
+
+  const acknowledgeImportantConversation = useCallback((conversation: Conversation) => {
+    const signature = getImportantConversationSignature(conversation);
+    if (!signature) return;
+    setSeenImportantMessageSignatures(previous => {
+      if (previous[conversation.id] === signature) return previous;
+      const next = { ...previous, [conversation.id]: signature };
+      window.localStorage.setItem('chatos-seen-important-messages', JSON.stringify(next));
+      return next;
+    });
   }, []);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -291,10 +438,84 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     stats: {
       totalConversations: INITIAL_CONVERSATIONS.length,
       activeTodos: INITIAL_TODOS.filter(t => t.status !== 'completed' && !t.isIgnored).length,
-      storedFiles: INITIAL_KNOWLEDGE_ITEMS.filter(k => k.intakeStatus === 'stored').length,
+      storedFiles: 0,
       dedupedCount: 1,
     },
   });
+
+  const loadKnowledgeItems = useCallback(async () => {
+    let successfulRequests = 0;
+    const pages = await Promise.all(
+      KNOWLEDGE_KINDS.map(async kind => {
+        try {
+          const response = await fetch(`/api/gateway/knowledge/items?kind=${kind}&limit=50`, { cache: 'no-store' });
+          if (!response.ok) return [];
+          successfulRequests += 1;
+          const data = await response.json() as { items?: GatewayKnowledgeItem[] };
+          return Array.isArray(data.items) ? data.items : [];
+        } catch {
+          return [];
+        }
+      })
+    );
+    if (successfulRequests === 0) throw new Error('knowledge gateway unavailable');
+    const next = [...new Map(
+      pages.flat()
+        .sort((a, b) => b.sentAt - a.sentAt)
+        .map(item => [item.id, mapGatewayKnowledgeItem(item)])
+    ).values()];
+    setKnowledgeItems(next);
+    setKnowledgeDataStatus('ready');
+    setEngineState(previous => ({
+      ...previous,
+      stats: {
+        ...previous.stats,
+        storedFiles: next.filter(item => item.intakeStatus === 'stored').length,
+      },
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (conversationDataSource !== 'database') return;
+    setKnowledgeDataStatus('loading');
+    void loadKnowledgeItems().catch(() => {
+      setKnowledgeItems([]);
+      setKnowledgeDataStatus('unavailable');
+    });
+  }, [conversationDataSource, loadKnowledgeItems]);
+
+  useEffect(() => {
+    if (conversationDataSource !== 'database') return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/gateway/knowledge/index/status', { cache: 'no-store' });
+        if (!response.ok) return;
+        const status = await response.json() as KnowledgeIndexStatus;
+        if (active) setKnowledgeIndexStatus(status);
+      } catch {
+        // Keep the last honest status when the local gateway is temporarily unavailable.
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(refresh, knowledgeIndexStatus.status === 'running' ? 1500 : 15000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [conversationDataSource, knowledgeIndexStatus.status]);
+
+  const runKnowledgeIndex = useCallback(async () => {
+    try {
+      const response = await fetch('/api/gateway/knowledge/index/start', { method: 'POST' });
+      const status = await response.json() as KnowledgeIndexStatus;
+      if (!response.ok) throw new Error(status.error || `knowledge index ${response.status}`);
+      setKnowledgeIndexStatus(status);
+      showToast(status.status === 'running' ? '资料归档与本地向量索引已在后台开始' : '资料索引任务已在运行');
+    } catch {
+      showToast('无法启动本地知识库索引，请检查 gateway 与 local-model');
+    }
+  }, [showToast]);
 
   useEffect(() => {
     let active = true;
@@ -616,63 +837,12 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     })();
   }, [todos, showToast]);
 
-  const createTodo = useCallback((newTodo: Partial<TodoItem>) => {
-    const item: TodoItem = {
-      id: `todo-custom-${Date.now()}`,
-      title: newTodo.title || '新待办任务',
-      description: newTodo.description || '',
-      status: newTodo.status || 'pending',
-      assigneeRole: newTodo.assigneeRole || 'i_am_responsible',
-      dueDate: newTodo.dueDate || '2026-09-17 18:00',
-      isUrgent: false,
-      isOverdue: false,
-      sourceMessageId: 'manual',
-      sourceConversationId: 'manual',
-      sourceConversationName: '人工手动创建',
-      sourceSnippet: '由 JoyBoy 在 ChatOS 工作区手动建立',
-      evidenceText: '人工直接指派并确认行动。',
-      isIgnored: false,
-      manualModified: true,
-      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      confidence: 'clear',
-    };
-    setTodos(prev => [item, ...prev]);
-    showToast('已创建新待办');
-  }, [showToast]);
-
   const deleteTodo = useCallback((id: string) => {
     setTodos(prev => prev.filter(t => t.id !== id));
     showToast('已删除待办项');
   }, [showToast]);
 
   // Project operations
-  const createProject = useCallback((name: string, currentAction: string, linkedConvIds: string[]) => {
-    const newProj: Project = {
-      id: `proj-${Date.now()}`,
-      name,
-      code: name.slice(0, 8).toUpperCase(),
-      oneLineProgress: '刚刚创建的项目，正在聚合多方会话证据',
-      currentAction: currentAction || '梳理项目目标并确立首批行动计划',
-      linkedConversationIds: linkedConvIds,
-      completionPercentage: 10,
-      status: 'active',
-      isAutoGenerated: false,
-      evidenceCount: 1,
-      lastUpdated: '刚刚',
-      color: '#8b5cf6',
-    };
-    setProjects(prev => [newProj, ...prev]);
-    // update linked conversations
-    setConversations(prev =>
-      prev.map(c =>
-        linkedConvIds.includes(c.id)
-          ? { ...c, linkedProjectIds: Array.from(new Set([...c.linkedProjectIds, newProj.id])) }
-          : c
-      )
-    );
-    showToast(`项目「${name}」已创建并关联 ${linkedConvIds.length} 个会话`);
-  }, [showToast]);
-
   const renameProject = useCallback((id: string, newName: string) => {
     setProjects(prev =>
       prev.map(p => (p.id === id ? { ...p, name: newName, lastUpdated: '刚刚' } : p))
@@ -1427,6 +1597,8 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setActiveWorkspace,
       isSidebarCollapsed,
       setIsSidebarCollapsed,
+      isAlertMotionEnabled,
+      setIsAlertMotionEnabled,
       selectedConversation,
       setSelectedConversation,
       selectedProject,
@@ -1443,9 +1615,20 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       conversationDataSource,
       conversationDataUpdatedAt,
       conversationTotal,
+      conversationGroups,
+      activeConversationGroupId,
+      setActiveConversationGroupId,
+      createConversationGroup,
+      deleteConversationGroup,
+      moveConversationToGroup,
+      seenImportantMessageSignatures,
+      acknowledgeImportantConversation,
       todos,
       projects,
       knowledgeItems,
+      knowledgeDataStatus,
+      knowledgeIndexStatus,
+      runKnowledgeIndex,
       messages,
       auditLogs,
       engineState,
@@ -1475,9 +1658,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updateTodoStatus,
       updateTodoDueDate,
       toggleIgnoreTodo,
-      createTodo,
       deleteTodo,
-      createProject,
       renameProject,
       archiveProject,
       linkConversationToProject,
@@ -1505,6 +1686,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [
       activeWorkspace,
       isSidebarCollapsed,
+      isAlertMotionEnabled,
       selectedConversation,
       selectedProject,
       selectedTodo,
@@ -1515,9 +1697,19 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       conversationDataSource,
       conversationDataUpdatedAt,
       conversationTotal,
+      conversationGroups,
+      activeConversationGroupId,
+      createConversationGroup,
+      deleteConversationGroup,
+      moveConversationToGroup,
+      seenImportantMessageSignatures,
+      acknowledgeImportantConversation,
       todos,
       projects,
       knowledgeItems,
+      knowledgeDataStatus,
+      knowledgeIndexStatus,
+      runKnowledgeIndex,
       messages,
       auditLogs,
       engineState,
@@ -1541,9 +1733,7 @@ export const ChatOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updateTodoStatus,
       updateTodoDueDate,
       toggleIgnoreTodo,
-      createTodo,
       deleteTodo,
-      createProject,
       renameProject,
       archiveProject,
       linkConversationToProject,
