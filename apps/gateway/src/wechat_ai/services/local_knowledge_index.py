@@ -42,6 +42,8 @@ class LocalKnowledgeIndex:
         configured_python = os.environ.get("CHATOS_LOCAL_MODEL_PYTHON")
         if configured_python:
             python_command = (configured_python,)
+        elif (venv_python := cli_path.parent.parent / ".venv" / "Scripts" / "python.exe").is_file():
+            python_command = (str(venv_python),)
         elif shutil.which("py"):
             python_command = (str(shutil.which("py")), "-3.13")
         else:

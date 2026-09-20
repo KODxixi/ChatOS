@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const baseUrl = (process.env.CHATOS_GATEWAY_URL || 'http://127.0.0.1:8912').replace(/\/$/, '');
 const pollMs = Number(process.env.CHATOS_SYNC_POLL_MS || 5000);
 const timeoutMs = Number(process.env.CHATOS_SYNC_TIMEOUT_MS || 55 * 60 * 1000);
+const knowledgeIndexTimeoutMs = Number(process.env.CHATOS_KNOWLEDGE_INDEX_TIMEOUT_MS || 70 * 60 * 1000);
 const logDir = path.join(root, 'var', 'logs');
 const logPath = path.join(logDir, 'hourly-sync.log');
 let sessionCookie = '';
@@ -48,12 +49,7 @@ async function requestJson(endpoint, options = {}) {
   return body;
 }
 
-async function main() {
-  const health = await requestJson('/api/health');
-  if (health.app !== 'ready') {
-    throw new Error(`gateway is not ready: ${JSON.stringify(health)}`);
-  }
-
+async function runIncrementalOrganize() {
   const queued = await requestJson('/api/organize/incremental', { method: 'POST' });
   const jobId = queued.id || queued.jobId;
   if (!jobId) throw new Error(`organize response has no job id: ${JSON.stringify(queued)}`);
@@ -64,17 +60,45 @@ async function main() {
     const job = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}`);
     if (['completed', 'degraded', 'failed', 'cancelled', 'interrupted'].includes(job.status)) {
       log('job_finished', { jobId, status: job.status, result: job.result ?? null, errorCode: job.errorCode ?? null });
-      if (job.status === 'completed') return;
-      if (job.status === 'degraded') {
-        // 规则式整理已完成；LLM 不可用只作为日志告警，不让计划任务误判整次同步失败。
-        return;
-      }
+      if (job.status === 'completed' || job.status === 'degraded') return job;
       throw new Error(`organize job ${job.status}: ${job.errorCode || 'unknown error'}`);
     }
     await delay(pollMs);
   }
 
   throw new Error(`organize job timed out after ${timeoutMs}ms: ${jobId}`);
+}
+
+async function runKnowledgeIndex() {
+  const started = await requestJson('/api/knowledge/index/start', { method: 'POST' });
+  log('knowledge_index_started', { status: started.status, stage: started.stage });
+
+  const deadline = Date.now() + knowledgeIndexTimeoutMs;
+  while (Date.now() < deadline) {
+    const status = await requestJson('/api/knowledge/index/status');
+    if (status.status === 'completed') {
+      log('knowledge_index_finished', { status: status.status, stats: status.stats ?? null });
+      return status;
+    }
+    if (['failed', 'interrupted'].includes(status.status)) {
+      log('knowledge_index_finished', { status: status.status, error: status.error ?? null });
+      throw new Error(`knowledge index ${status.status}: ${status.error || 'unknown error'}`);
+    }
+    await delay(pollMs);
+  }
+
+  throw new Error(`knowledge index timed out after ${knowledgeIndexTimeoutMs}ms`);
+}
+
+async function main() {
+  const health = await requestJson('/api/health');
+  if (health.app !== 'ready') {
+    throw new Error(`gateway is not ready: ${JSON.stringify(health)}`);
+  }
+
+  const organize = await runIncrementalOrganize();
+  await runKnowledgeIndex();
+  log('pipeline_finished', { organizeStatus: organize.status, status: 'completed' });
 }
 
 main().catch(error => {

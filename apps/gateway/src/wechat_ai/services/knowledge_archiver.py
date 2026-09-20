@@ -74,6 +74,8 @@ def _write_registry(knowledge_root: Path) -> None:
         "    embed_model: text-embedding-qwen3-embedding-8b\n"
         "    max_file_bytes: 5000000\n"
         "    max_files: 100000\n"
+        "    embed_batch_size: 64\n"
+        "    warmup_on_index: true\n"
     )
     (knowledge_root / "local-model-registry.yaml").write_text(registry, encoding="utf-8")
 
