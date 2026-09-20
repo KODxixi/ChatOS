@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -66,6 +66,10 @@ def find_available_port() -> int:
 
 def main() -> int:
     settings = load_settings()
+    from .services.embedding_service import configure_from_settings as _cfg_embed
+    from .services.message_cleaning import configure as _cfg_clean
+    _cfg_embed(settings)
+    _cfg_clean(settings)
     state_dir = settings.project_root / "data" / "state"
     state_path = state_dir / "runtime.json"
     instance = SingleInstanceLock(state_dir / "gchat.lock")

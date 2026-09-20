@@ -1,4 +1,4 @@
-"""Embedding generation + index management for semantic search / RAG."""
+﻿"""Embedding generation + index management for semantic search / RAG."""
 from __future__ import annotations
 
 import json
@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 BASE = os.environ.get("LOCAL_EMBEDDING_BASE_URL", "http://localhost:9123/v1")
 MODEL = os.environ.get("LOCAL_EMBEDDING_MODEL", "text-embedding-qwen3-embedding-8b")
 KEY = os.environ.get("APIYI_API_KEY") or os.environ.get("CC_APIYI_KEY")
-BATCH = 32
+BATCH = 1024
 _DIM = 4096
+_CONTEXT_LENGTH = 2048
+_MIN_TEXT_LENGTH = 4
 # fallback config (used if llama-swap unreachable)
 _FALLBACK_BASE = os.environ.get("LOCAL_EMBEDDING_FALLBACK_URL", "http://localhost:1234/v1")
 _FALLBACK_MODEL = os.environ.get("LOCAL_EMBEDDING_FALLBACK_MODEL", "text-embedding-nomic-embed-text-v1.5")
@@ -50,6 +52,32 @@ NOISE_GROUP_KEYWORDS = [
     "相亲相爱", "吃喝玩乐", "美食", "旅游", "购物", "淘宝", "拼多多",
     "京东", "快递", "外卖", "神劵", "立减", "新户", "亲友团", "团购群",
 ]
+
+
+
+
+_SYNC_INTERVAL_MIN = 15
+_SYNC_ENABLED = False
+
+def configure_from_settings(settings) -> None:
+    """Push indexing config from Settings into module-level runtime globals."""
+    global MODEL, BATCH, _CONTEXT_LENGTH, _MIN_TEXT_LENGTH
+    global GROUP_SIZE_THRESHOLD, NOISE_GROUP_KEYWORDS
+    global _SYNC_ENABLED, _SYNC_INTERVAL_MIN
+    m = getattr(settings, "indexing_model", None)
+    if m:
+        MODEL = str(m)
+    BATCH = int(getattr(settings, "indexing_batch_size", BATCH))
+    _CONTEXT_LENGTH = int(getattr(settings, "indexing_context_length", _CONTEXT_LENGTH))
+    _MIN_TEXT_LENGTH = int(getattr(settings, "indexing_min_text_length", _MIN_TEXT_LENGTH))
+    GROUP_SIZE_THRESHOLD = int(getattr(settings, "indexing_group_size_threshold", GROUP_SIZE_THRESHOLD))
+    kws = getattr(settings, "indexing_noise_group_keywords", None)
+    if kws:
+        NOISE_GROUP_KEYWORDS = list(kws)
+    _SYNC_ENABLED = bool(getattr(settings, "indexing_sync_enabled", False))
+    _SYNC_INTERVAL_MIN = int(getattr(settings, "indexing_sync_interval_minutes", 15))
+    logger.info("embedding_service configured: model=%s batch=%d ctx=%d minlen=%d group_thr=%d sync=%s/%dm",
+                MODEL, BATCH, _CONTEXT_LENGTH, _MIN_TEXT_LENGTH, GROUP_SIZE_THRESHOLD, _SYNC_ENABLED, _SYNC_INTERVAL_MIN)
 
 
 def _is_noise_group(title: str) -> bool:
@@ -191,7 +219,7 @@ def clean_text(t: str) -> str:
     t = re.sub(r"\[[^\]]{1,8}\]", "", t)
     t = re.sub(r"https?://\S+", "", t)
     t = re.sub(r"\s+", " ", t).strip()
-    return t[:8192]
+    return t[:_CONTEXT_LENGTH]
 
 
 # Recheck the override atomically at the write, including after a slow model call.
@@ -277,7 +305,7 @@ def _can_index_conversation(connection: sqlite3.Connection, conversation_id: str
 
 def index_conversation(db_path: str, conversation_id: str) -> dict:
     """Index one conversation (runs in a background thread). Batched for GPU throughput."""
-    INDEX_BATCH = 128
+    INDEX_BATCH = BATCH
     # NOTE: _JOB["running"] is managed by the caller (index_all / index_top),
     # not here — this function may be called in a loop across many conversations.
     try:
@@ -291,10 +319,10 @@ def index_conversation(db_path: str, conversation_id: str) -> dict:
             rows = conn.execute(
                 """SELECT m.id, m.content FROM messages m
                    WHERE m.conversation_id=? AND m.type='text'
-                     AND m.content IS NOT NULL AND length(m.content)>2
+                     AND m.content IS NOT NULL AND length(m.content)>=?
                      AND NOT EXISTS (SELECT 1 FROM message_embeddings me WHERE me.message_id=m.id AND me.status='indexed')
                    ORDER BY m.sent_at DESC""",
-                (conversation_id,),
+                (conversation_id, _MIN_TEXT_LENGTH),
             ).fetchall()
             total = len(rows)
             with _job_lock:
@@ -311,7 +339,7 @@ def index_conversation(db_path: str, conversation_id: str) -> dict:
                 ids = []
                 for r in batch:
                     ct = clean_text(r["content"] or "")
-                    if len(ct) >= 4:
+                    if len(ct) >= _MIN_TEXT_LENGTH:
                         texts.append(ct)
                         ids.append(r["id"])
                 if not texts:
@@ -445,3 +473,116 @@ def search(connection: sqlite3.Connection, query: str, *, conversation_id: str |
             "combinedScore": round(score, 3),
         })
     return out
+
+
+
+def verify_index_coverage(db_path: str) -> dict:
+    """Post-index verification: compare eligible text messages vs indexed.
+
+    Returns dict with totals and gap. Gap > 0 means some messages failed or
+    were skipped silently. Call this after any index run.
+    """
+    import sqlite3 as _sq
+    conn = _sq.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = _sq.Row
+    # eligible = text, len>=minlen, in indexable conversations (direct or small non-noise groups)
+    cids = _get_indexable_conversations(db_path)
+    ph = ",".join("?" * len(cids))
+    eligible = conn.execute(f"""
+        SELECT COUNT(*) FROM messages m
+        WHERE m.conversation_id IN ({ph})
+          AND m.type='text' AND m.content IS NOT NULL AND length(m.content)>=?
+    """, cids + [_MIN_TEXT_LENGTH]).fetchone()[0]
+    indexed = conn.execute(
+        "SELECT COUNT(*) FROM message_embeddings WHERE status='indexed'"
+    ).fetchone()[0]
+    conn.close()
+    gap = eligible - indexed
+    result = {"eligible": eligible, "indexed": indexed, "gap": gap, "conversations": len(cids)}
+    if gap > 0:
+        logger.warning("index coverage gap: eligible=%d indexed=%d gap=%d", eligible, indexed, gap)
+    else:
+        logger.info("index coverage OK: eligible=%d indexed=%d", eligible, indexed)
+    return result
+
+
+def start_periodic_sync(settings) -> None:
+    """Start a background thread that indexes new messages every N minutes.
+
+    Reads indexing_sync_enabled / indexing_sync_interval_minutes from settings.
+    No-op if sync is disabled. Safe to call at app startup.
+    """
+    global _SYNC_ENABLED, _SYNC_INTERVAL_MIN
+    configure_from_settings(settings)
+    if not _SYNC_ENABLED:
+        logger.info("periodic sync disabled (indexing.syncEnabled=false)")
+        return
+
+    db_path = settings.library_db
+    interval = _SYNC_INTERVAL_MIN * 60
+
+    def _loop():
+        import time as _t
+        # wait 30s after startup before first run
+        _t.sleep(30)
+        while True:
+            try:
+                logger.info("periodic sync: starting index run")
+                index_all_conversations(db_path)
+                # wait for the background thread to finish
+                with _job_lock:
+                    while _JOB.get("running"):
+                        _t.sleep(5)
+                v = verify_index_coverage(db_path)
+                logger.info("periodic sync done: %s", v)
+            except Exception as e:
+                logger.warning("periodic sync error: %s", e)
+            _t.sleep(interval)
+
+    import threading
+    t = threading.Thread(target=_loop, daemon=True, name="index-sync")
+    t.start()
+    logger.info("periodic sync started: every %d min", _SYNC_INTERVAL_MIN)
+
+
+def self_check(db_path: str) -> bool:
+    """Startup self-check: verify config reads and SQL bindings work.
+
+    Catches parameter-mismatch bugs at startup instead of mid-index.
+    Returns True if all checks pass.
+    """
+    import sqlite3 as _sq
+    errors = []
+    try:
+        conn = _sq.connect(f"file:{db_path}?mode=ro", uri=True)
+        # check 1: _can_index_conversation SQL binding
+        cid = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()
+        if cid:
+            try:
+                _can_index_conversation(conn, cid[0])
+            except Exception as e:
+                errors.append(f"_can_index_conversation SQL: {e}")
+        # check 2: index query binding
+        try:
+            conn.execute(
+                "SELECT m.id FROM messages m WHERE m.conversation_id=? AND m.type='text' AND length(m.content)>=? LIMIT 1",
+                (cid[0] if cid else "x", _MIN_TEXT_LENGTH),
+            ).fetchone()
+        except Exception as e:
+            errors.append(f"index query SQL: {e}")
+        # check 3: message_embeddings table exists
+        try:
+            conn.execute("SELECT COUNT(*) FROM message_embeddings LIMIT 1").fetchone()
+        except Exception as e:
+            errors.append(f"message_embeddings table: {e}")
+        conn.close()
+    except Exception as e:
+        errors.append(f"db connect: {e}")
+
+    if errors:
+        for e in errors:
+            logger.error("self-check FAIL: %s", e)
+        return False
+    logger.info("self-check OK: model=%s batch=%d minlen=%d sync=%s/%dm",
+                MODEL, BATCH, _MIN_TEXT_LENGTH, _SYNC_ENABLED, _SYNC_INTERVAL_MIN)
+    return True

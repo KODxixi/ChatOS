@@ -79,6 +79,20 @@ FILLER_EXACT = {
     "收到收到", "是的是的", "okok", "OKOK", "no", "NO",
 }
 
+# Runtime override populated by configure(); None = use default FILLER_EXACT.
+_FILLER_OVERRIDE: set[str] | None = None
+_FILLER_FILTER_ENABLED: bool = True
+
+
+def configure(settings) -> None:
+    """Push filler filter config from Settings into module-level globals."""
+    global _FILLER_OVERRIDE, _FILLER_FILTER_ENABLED
+    _FILLER_FILTER_ENABLED = bool(getattr(settings, "indexing_filler_filter_enabled", True))
+    pats = getattr(settings, "indexing_filler_patterns", None)
+    if pats:
+        _FILLER_OVERRIDE = {p.strip() for p in pats if isinstance(p, str) and p.strip()}
+
+
 # Action verbs a real todo must contain.
 ACTION_VERBS_RE = re.compile(
     r"准备|提交|发送|发一下|发我|确认|修改|完成|下载|整理|回复|联系|"
@@ -279,8 +293,11 @@ def strip_leading_filler(text: str) -> str:
 
 def is_filler(text: str) -> bool:
     """Return True for pure confirmations / emoticon-only / punctuation."""
+    if not _FILLER_FILTER_ENABLED:
+        return False
     s = strip_emoji(text).strip().rstrip("。，！!?~～.、 ")
-    if s in FILLER_EXACT:
+    table = _FILLER_OVERRIDE if _FILLER_OVERRIDE is not None else FILLER_EXACT
+    if s in table:
         return True
     if not re.search(r"[\u4e00-\u9fa5A-Za-z]", s):
         return True

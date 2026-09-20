@@ -26,6 +26,18 @@ class Settings:
     frontend_url: str | None = None
     config_path: Path | None = None
     config_identity: str | None = None
+    # indexing (message embedding pipeline)
+    indexing_model: str = "text-embedding-qwen3-embedding-8b"
+    indexing_batch_size: int = 1024
+    indexing_context_length: int = 2048
+    indexing_min_text_length: int = 4
+    indexing_filler_filter_enabled: bool = True
+    indexing_filler_patterns: list[str] | None = None
+    indexing_group_filter_enabled: bool = True
+    indexing_group_size_threshold: int = 30
+    indexing_noise_group_keywords: list[str] | None = None
+    indexing_sync_enabled: bool = False
+    indexing_sync_interval_minutes: int = 15
 
     @property
     def asset_dir(self) -> Path:
@@ -56,6 +68,15 @@ def load_settings(
     if not isinstance(llama_swap, dict):
         raise ValueError("llamaSwap must be a JSON object")
 
+    indexing = raw.get("indexing", {})
+    if not isinstance(indexing, dict):
+        raise ValueError("indexing must be a JSON object")
+
+    def _str_list(value: Any, fallback: list[str]) -> list[str]:
+        if isinstance(value, list) and all(isinstance(x, str) for x in value):
+            return value
+        return fallback
+
     return Settings(
         project_root=root,
         source_dir=resolve_project_path(root, raw.get("sourceDir", "decrypted")),
@@ -84,6 +105,17 @@ def load_settings(
         activity_filter_inactive_days=int(
             raw.get("activityFilterInactiveDays", 30)
         ),
+        indexing_model=str(indexing.get("model", "text-embedding-qwen3-embedding-8b")),
+        indexing_batch_size=int(indexing.get("batchSize", 1024)),
+        indexing_context_length=int(indexing.get("contextLength", 2048)),
+        indexing_min_text_length=int(indexing.get("minTextLength", 4)),
+        indexing_filler_filter_enabled=bool(indexing.get("fillerFilterEnabled", True)),
+        indexing_filler_patterns=_str_list(indexing.get("fillerPatterns"), None),
+        indexing_group_filter_enabled=bool(indexing.get("groupFilterEnabled", True)),
+        indexing_group_size_threshold=int(indexing.get("groupSizeThreshold", 30)),
+        indexing_noise_group_keywords=_str_list(indexing.get("noiseGroupKeywords"), None),
+        indexing_sync_enabled=bool(indexing.get("syncEnabled", False)),
+        indexing_sync_interval_minutes=int(indexing.get("syncIntervalMinutes", 15)),
     )
 
 

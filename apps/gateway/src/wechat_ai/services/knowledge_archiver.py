@@ -1,4 +1,4 @@
-"""Build the disposable ChatOS file/archive projection from read-only WeChat data."""
+﻿"""Build the disposable ChatOS file/archive projection from read-only WeChat data."""
 
 from __future__ import annotations
 

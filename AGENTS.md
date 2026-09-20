@@ -1,9 +1,72 @@
-# AGENTS.md
+﻿# AGENTS.md
 
 <!-- repository-verify: scripts/verify-entry.mjs -->
 
 ChatOS 将微信只读原始数据变成可检索的本地第二大脑。贡献前先看本文件禁忌与当前组件 AGENTS。
 
+> **一句话定义**：ChatOS = 微信聊天的本地语义搜索层。文本向量在 SQLite，文件向量在 LanceDB，模型全本地。
+
+## 用户场景
+
+ChatOS 帮你做三件事：
+
+| 场景 | 怎么用 | API |
+|---|---|---|
+| **搜你三个月前和某人的微信对话** | 输入关键词或自然语言，语义搜索相关消息 | `GET /api/search/semantic?q=&limit=` |
+| **帮我总结这个礼拜的会议** | 问一个问题，RAG 基于聊天记录回答 | `POST /api/rag/ask` |
+| **从聊天里提取待办事项** | 自动扫描消息，提取未来动作/承诺/请求 | `POST /api/tasks/extract` |
+
+核心价值：**不用翻几百条聊天记录，直接用自然语言问，答案来自你的真实微信对话。**
+
+## 快速开始（外部 agent 必读）
+
+```powershell
+# 1. 杀旧进程（避免 database locked）
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match "wechat_ai" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# 2. 启动开发实例（端口 8765）
+cd C:\ChatOS\apps\gateway
+.venv\Scripts\python.exe -m wechat_ai serve --port 8765 --no-browser
+
+# 3. 验证
+Invoke-RestMethod http://127.0.0.1:8765/api/runtime
+# 返回 pid + appVersion 即正常
+```
+
+- **正式端口**：8912（走 `scripts/start_chatos.bat`，含 UI 3108）
+- **开发端口**：8765（只起 gateway，不起 UI）
+- **数据库**：`D:\ChatOS-Vault\library\wechat-ai.sqlite`（只读原始表 + 可写派生表）
+
+## 状态查询（外部 agent 必读）
+
+**ChatOS 向量索引已经建好，不要去 openclaw/Gavis_Core/vault_search_mcp 找。**
+
+| 查什么 | 在哪 | 命令 |
+|---|---|---|
+| 文本向量有多少条 | SQLite `message_embeddings` 表 | `SELECT COUNT(*) FROM message_embeddings WHERE status='indexed'` → 应返回 ~25277 |
+| 文件向量有多少 chunks | LanceDB `kb_chatos` 表 | lancedb 连 `D:\ChatOS-Vault\library\knowledge\lancedb`，打开表 `kb_chatos` → 应返回 ~15142 |
+| 服务在跑吗 | HTTP | `Invoke-RestMethod http://127.0.0.1:8765/api/runtime` |
+| 索引进度 | HTTP | `GET /api/vector/status` |
+
+**不要找的地方：**
+- ❌ `C:\AI\repos\Gavis_Core\index\lancedb\` — 这是 Gavis 项目的，不是 ChatOS
+- ❌ openclaw transcript FTS — 这是 openclaw 的关键词搜索，不是 ChatOS 的向量索引
+- ❌ vault_search_mcp — 未部署的桥接，ChatOS 不需要它
+
+
+## 规则真相源指针（agent-md）
+
+| 功能 | 真相源 | 说明 |
+|---|---|---|
+| 启动/运维 | 本文件 + C:\AI\memory\_canonical\TOOLS.md | 启动前杀旧进程、端口/锁管理 |
+| 向量索引过滤 | apps/gateway/src/wechat_ai/services/embedding_service.py | 大群/噪声群过滤，配置在 config/settings.json indexing 块 |
+| 文本清洗 | apps/gateway/src/wechat_ai/services/message_cleaning.py | filler 词表、打分规则 |
+| LLM/embedding 端点 | 本文件「LLM 集成」段 + local-model skill | llama-swap 9123 / LM Studio 降级链 |
+| 数据库 schema | apps/gateway/src/wechat_ai/migrations/ | 原始表只读，派生表可写 |
+| RAG 问答 prompt | `apps/gateway/src/wechat_ai/system/rag-system.md` | 微信聊天 RAG 系统 prompt，改这个不改代码 |
+| 对话摘要 prompt | `apps/gateway/src/wechat_ai/system/summarize-system.md` | LLM 对话摘要 system prompt |
+| 待办过滤 prompt | `apps/gateway/src/wechat_ai/system/todo-filter-system.md` | LLM 待办事项过滤 system prompt |
+| 语义提取 prompt | `apps/gateway/src/wechat_ai/system/semantic-extract-system.md` + `semantic-extract-task.md` | 知识图谱实体提取 prompt |
 ## 唯一维护的源码与入口
 
 - 正式 UI：`apps/chatos-console`，来自原型 commit `e9d78e9c3f1c216c668a4810fe890d764131b88a`；Vite + React + Express，`http://127.0.0.1:3108/`。
@@ -28,6 +91,39 @@ ChatOS 将微信只读原始数据变成可检索的本地第二大脑。贡献�
 | `scripts/entry-contract.mjs` | 源码/输出摘要、端口与运行身份契约 |
 | `classification/`、`bridges/archos/` | 分类规则、跨项目契约 |
 | `var/` | 忽略的备份、日志、运行证据；不是源码 |
+
+## 架构总览
+
+```
+用户浏览器 (3108)  <--->  Express server
+                          v 只读 SQLite 适配
+FastAPI gateway (8912/8765)
+  +-- plugins/      拓扑排序，组装 service + router
+  +-- api/          HTTP 路由层（参数解析、响应组装）
+  +-- services/     业务逻辑（事务、LLM、清洗、索引）
+  +-- migrations/   SQL schema，启动自动执行
+
+数据层：
+  SQLite (wechat-ai.sqlite)
+    +-- conversations / messages / message_parts / assets  [原始表只读]
+    +-- message_embeddings (BLOB 4096维)                  [文本向量]
+    +-- tasks / llm_cache / projects                      [派生表可写]
+  LanceDB (D:\ChatOS-Vault\library\knowledge\lancedb)
+    +-- kb_chatos (15,142 chunks)                       [文件类向量]
+
+模型层：
+  llama-swap 9123  <- embedding/rerank (Vulkan GPU)
+  LM Studio 1234   <- chat/VLM fallback (CUDA)
+```
+
+### 已知技术债（2026-09-20 记录）
+
+| 项 | 位置 | 说明 |
+|---|---|---|
+| 大文件 | services/agent_service.py (1822行) | 需拆分，非本次范围 |
+| 大文件 | services/gchat_service.py (1554行) | 需拆分，非本次范围 |
+| ~~硬编码 prompt~~ | ~~rag_prompt.py, api/vector.py, llm_service.py 等~~ | **已解决**（2026-09-20 提取到 system/*.md） |
+| 模板复制 | 多个 service 均 ~470行 | 脚手架复制，后续去重 |
 
 ## 核心数据模型
 
@@ -102,7 +198,11 @@ expires_at  INTEGER                -- 可空；非空且过期会被 GC 删除
 | GET | `/api/audit/stats` | 审计统计（媒体/链接/任务覆盖率） |
 | GET | `/api/graph?limit&hideNoise` | 知识图谱 nodes/edges |
 | GET | `/api/projects?minMessages=` | 项目列表 |
-| GET | `/api/search?q=&limit=` | 全文搜索消息 |
+| GET | `/api/search?q=&limit=` | 全文搜索消息（关键词） |
+| GET | `/api/search/semantic?q=&conversation_id=&limit=&threshold=` | **语义搜索**（向量相似度，核心功能） |
+| GET | `/api/vector/status` | 向量索引进度 |
+| GET | `/api/vector/index/start?full=true` | 触发向量索引 |
+| POST | `/api/rag/ask` | RAG 问答（语义搜索 + LLM 生成答案） |
 | GET | `/api/assets/{id}` | 取本地附件文件流 |
 | POST | `/api/knowledge/archive` | 归档知识（文件+链接落盘） |
 | POST | `/api/ask/stream` | 两阶段 RAG 流式问答（高级） |
@@ -137,98 +237,9 @@ Node >=22.13（node:sqlite）、Python >=3.13；日志 `var/logs/`，构建 `app
 后端继续按 `api/`、`services/`、`plugins/` 分层；错误走已有 helper，保持本地会话保护。
 新非平凡逻辑先 RED 再 GREEN；HTTP/资源验证不能替代浏览器视觉验收。
 
-## LLM 集成（本地模型优先，零外部额度）
-
-**核心原则：所有 LLM / embedding / reranker 调用必须优先使用本地 LM Studio，数据不出本地，零外部 API 额度消耗。**
-
-### 本地模型栈
-
-| 用途 | 模型名 | 端点 | 说明 |
-|---|---|---|---|
-| **Embedding（向量索引，主）** | `text-embedding-qwen3-embedding-8b`（4096维） | llama-swap `http://localhost:9123/v1` | Vulkan 全层 GPU（-ngl 99），RTX 5090 |
-| **Embedding（本地降级）** | `text-embedding-nomic-embed-text-v1.5`（768维） | LM Studio `http://localhost:1234/v1` | llama-swap 不可用时降级 |
-| **Chat / RAG 问答 / 摘要** | `qwen/qwen3-vl-8b` | LM Studio `http://localhost:1234/v1` | CUDA，视觉理解+对话 |
-| **Reranker（搜索重排序）** | `text-reranker-8b` | llama-swap `http://localhost:9123/v1` | 同端点，混合检索精排 |
-
-**关键区分**：embedding/reranker 走 **llama-swap 9123**（Vulkan，文本模型常驻 GPU）；
-chat/VLM 走 **LM Studio 1234**（CUDA，按需加载）。两个服务独立运行，互不抢占显存。
-
-### 配置
-
-- llama-swap 端点：`LOCAL_EMBEDDING_BASE_URL=http://localhost:9123/v1`（默认）
-- llama-swap embedding 模型：`LOCAL_EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b`
-- LM Studio 降级端点：`LOCAL_EMBEDDING_FALLBACK_URL=http://localhost:1234/v1`
-- LM Studio 降级模型：`LOCAL_EMBEDDING_FALLBACK_MODEL=text-embedding-nomic-embed-text-v1.5`
-- 本地 chat 模型：`LOCAL_LLM_MODEL=qwen/qwen3-vl-8b`（LM Studio）
-- 不需要 API key（本地服务无鉴权）
-- llama-swap 模型 TTL 300s 自动卸载（embedding 常驻），空闲时释放显存
-- **llama-swap 和 LM Studio 必须保持运行**；llama-swap 不可用时自动降级到 LM Studio，再不可用降级到外部 API
-
-### 降级策略（仅本地不可用时）
-
-降级链：**llama-swap 9123 → LM Studio 1234 → 外部 APIYI**
-- 第一级：llama-swap `text-embedding-qwen3-embedding-8b`（4096维，主）
-- 第二级：LM Studio `text-embedding-nomic-embed-text-v1.5`（768维，本地降级）
-- 第三级：APIYI 中继 `https://api.apiyi.com/v1`，模型 `text-embedding-3-small`
-- 密钥：环境变量 `APIYI_API_KEY`（或 `CC_APIYI_KEY`）
-- **降级是最后的手段**：优先确保 llama-swap 运行，其次 LM Studio，最后才外部
-- 降级到不同维度模型时，搜索结果可能不准确（向量空间不兼容），应尽快恢复主模型
-- 启动时检查本地端点可用性，日志中明确标注当前使用的是哪个端点
-
-### 缓存与异步
-
-- 超时：本地 10s，外部 20s
-- **缓存策略**：`get_cached()`/`put_cached()` 以 `{task_type}:{ref_id}:{sha256}` 为 key 读写 `llm_cache`；
-  命中即返回，未命中才调模型；读时顺手 GC 过期行。
-- **异步/降级**：HTTP 处理函数先返回规则式结果，LLM 增强在后台任务里做；
-  任何网络/解析失败抛 `OpenAICompatibleUnavailable`，调用方静默回退规则结果。
-  **绝不让 LLM 调用阻塞用户请求。**
-
-### 向量索引
-
-- 向量存储：`message_embeddings` 表（migration `017_message_embeddings.sql`），BLOB 存储 float32 向量
-- **主模型**：`text-embedding-qwen3-embedding-8b`（4096 维），llama-swap 9123，Vulkan 全层 GPU
-- 只索引有文字内容的消息（跳过纯表情/图片/语音/文件）
-- **批量 128 条/请求**（`embedding_service.index_conversation`），GPU 加速，约 2500 条/分钟
-- 增量更新：新消息导入时自动触发 embedding
-- **embedding 模型切换时必须清除旧向量重新索引**（维度不同不能混用，如 768↔4096）
-
-#### 索引过滤规则（硬约束，不可跳过）
-
-向量索引**必须**应用以下过滤，否则大群和噪音群会拖垮索引速度并污染语义搜索结果：
-
-| 规则 | 条件 | 原因 |
-|---|---|---|
-| **跳过 30 人以上大群** | 群聊唯一发送者数 > `GROUP_SIZE_THRESHOLD`（默认 30） | 大群（业主群/家庭群/行业群）占 80%+ 消息量但语义价值低，是索引速度瓶颈 |
-| **跳过噪音群** | 群标题匹配 `NOISE_GROUP_KEYWORDS`（家人/闲聊/营销/广告/销售/客户/用户群/交流群/福利/优惠/团购/秒杀/业主群/同学群/老乡/亲友团/红包/抽奖/外卖/淘宝/拼多多 等） | 废话群/营销群/销售群的消息是语义噪音，污染搜索结果 |
-| **私聊不跳过** | `kind='direct'` | 1对1对话通常有价值 |
-| **system 不索引** | `kind='system'` | 系统通知/公众号推送 |
-
-过滤实现：`services/embedding_service.py` 的 `_get_indexable_conversations()` 函数，
-在 `index_all_conversations()` 和 `index_top_conversations()` 中统一调用。
-**新增索引入口必须经过此过滤，不得绕过。**
-
-过滤效果参考：139 个群聊中跳过 18 个（9 大群 + 9 噪音群），
-索引量从 84,531 条降至 ~48,000 条（减 43%），索引时间从 ~35 分钟降至 ~20 分钟。
-
-#### 触发索引
-
-- GET `/api/vector/index/start` — 触发 top 20 会话索引（无需 body，避免 422）
-- GET `/api/vector/index/start?full=true` — 触发全量索引（应用过滤规则）
-- GET `/api/vector/index/start?conversation_id=<id>` — 索引单个会话
-- GET `/api/vector/status` — 索引进度（indexed/total/running/progress/current conversation）
-- POST `/api/vector/index` — 备用（body 可选，`conversation_id` / `full`）
-
-## 常见问题排查
-
-| 症状 | 排查 |
-|---|---|
-| 服务启动失败 / 端口被占 | 根启动器按源码与启动身份核验；未知/过期服务拒绝复用，先核实 PID/可执行文件/源码归属再处理；日志见 `var/logs/` |
-| LLM 401 / 摘要没生效 | `APIYI_API_KEY` 未设或 key 失效；`llm_service.is_available()` 应为 True；此时摘要自动回退规则式，功能不挂 |
-| 前端白屏 | 前端改完没构建或 3108 未启动；先跑 `node scripts/verify-entry.mjs --live` |
-| 数据库锁定 / `database is locked` | WAL + 30s busy_timeout 已缓解；仍报锁通常是外部进程独占打开了 sqlite，关闭后重启 |
-| 媒体打不开 | `apps/gateway/config.json` 的 `db_dir` 没配，媒体根解析不到；`/api/assets/{id}` 依赖它 |
-| 迁移没跑 | `app_meta.schema_version` 对不上 migrations 最大序号；删库前先备份（`data/backups/`） |
+## LLM 集成
+- 真相源：`rules/llm-endpoints.md`（本地模型栈、降级链、缓存异步、prompt 真相源）
+- 原则：本地模型优先，零外部 API 额度。embedding/rerank 走 llama-swap 9123，chat/VLM 走 LM Studio 1234。
 
 ## 禁忌（红线）
 

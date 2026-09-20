@@ -100,8 +100,7 @@ def create_vector_router(connection_factory: ConnectionFactory, db_path: str) ->
         if not hits:
             return {"answer": None, "semanticResults": [], "citations": []}
         ctx = "\n".join(f"[{h['senderName']}] {h['content']}" for h in hits)
-        sys = ("你是一个基于微信对话记录的问答助手。根据以下对话片段回答问题，引用来源。"
-               "如果对话中没有相关信息，如实说不知道。")
+        from ..rag_prompt import LOCAL_WECHAT_RAG_SYSTEM_PROMPT as sys
         user = f"对话片段：\n{ctx}\n\n问题：{body.question}"
         try:
             answer = llm.complete(sys, user, max_tokens=400, temperature=0.2)

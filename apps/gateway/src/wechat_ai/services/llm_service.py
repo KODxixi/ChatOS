@@ -145,10 +145,8 @@ def complete(
 
 def summarize(messages_text: str) -> str | None:
     """Return an LLM summary, or None on any failure."""
-    system = (
-        "你是一个微信对话摘要助手。用1-2句自然中文概括对话：包含主题、关键结论、下一步行动。"
-        "50-80字，不要说话人前缀，不要语气词，不要重复，不要表情。直接输出摘要，不要解释。"
-    )
+    from ..rag_prompt import load_system_prompt
+    system = load_system_prompt("summarize-system")
     try:
         out = complete(system, messages_text, max_tokens=150, temperature=0.2)
     except OpenAICompatibleUnavailable:
@@ -177,12 +175,8 @@ def filter_todos(
     """
     if not items:
         return items
-    system = (
-        "你是待办事项过滤器。判断每条是否为真正待办（需要执行的未来动作/承诺/请求）。"
-        "不是待办：已完成（过去式）、疑问句、预测估计、情绪、状态汇报、闲聊、讽刺玩笑。"
-        "对每条只输出JSON对象：{\"index\":N,\"is_todo\":true/false,\"cleaned\":\"清洗后文本(10-50字,去表情去@)\"}。"
-        "只输出JSON数组，不要解释。"
-    )
+        from ..rag_prompt import load_system_prompt
+    system = load_system_prompt("todo-filter-system")
     lines = "\n".join(f"{i}. {it['text']}" for i, it in enumerate(items))
     raw = complete(system, lines, max_tokens=800, temperature=0.1, local_only=local_only)
     raw = raw.strip()

@@ -28,28 +28,10 @@ DEFAULT_BATCH_SIZE = 20
 # so a few huge rooms cannot dominate a full-library enrichment run.
 LARGE_GROUP_MIN_SPEAKERS = 30
 
-_SEMANTIC_SYSTEM_PROMPT = (
-    "You are a strict JSON information-extraction engine running locally on "
-    "private WeChat chat history. Your ONLY output is a single JSON document; "
-    "never add prose, markdown fences, explanations, or greetings. For every "
-    "evidence block you are given, identify its exact part id from the block "
-    "header and echo that value verbatim as messagePartId."
-)
+from ..rag_prompt import load_system_prompt as _load_prompt
+_SEMANTIC_SYSTEM_PROMPT = _load_prompt("semantic-extract-system")
 
-_SEMANTIC_EXTRACTION_TASK = (
-    "Extract concise topics and named entities from every supplied chat "
-    "evidence item. Return only strict JSON with this exact shape: "
-    '{"items":[{"messagePartId":1,"topics":["..."],'
-    '"entities":["..."]}]}. The messagePartId of each item MUST equal the '
-    "integer shown in that block's header (for example a block headed "
-    "`part_id: 39 | part=39` must be reported as messagePartId 39). "
-    'Never use the block\'s list position as messagePartId. '
-    "Omit an item only when its block has no topic or entity. "
-    "Hard limits that must never be exceeded: at most 8 topics per item, "
-    "at most 8 entities per item, each label at most 64 characters. "
-    "When a block contains more entities than the limit, keep only the "
-    "8 most relevant and drop the rest; never emit a ninth topic or entity."
-)
+_SEMANTIC_EXTRACTION_TASK = _load_prompt("semantic-extract-task")
 
 
 def _build_semantic_user_prompt(

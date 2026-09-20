@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import threading
@@ -55,7 +55,13 @@ def serve(
             webbrowser.open(base_url)
         return
 
-    app = create_app()
+    from .config import load_settings as _load_settings
+    from .services.embedding_service import configure_from_settings as _cfg_embed
+    from .services.message_cleaning import configure as _cfg_clean
+    _s = _load_settings()
+    _cfg_embed(_s)
+    _cfg_clean(_s)
+    app = create_app(_s)
     if not no_browser:
         _start_browser_when_ready(base_url)
     uvicorn.run(app, host=LOOPBACK_HOST, port=port)
