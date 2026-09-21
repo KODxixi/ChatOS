@@ -48,7 +48,7 @@ wechat_ai/
 
 `services/llm_service.py` 是唯一的 LLM 出口。**四条铁律**：
 
-1. **只用本地**：chat/VLM 走 `http://127.0.0.1:8080/v1`（Muse Glimmer），
+1. **只用本地**：chat/VLM 走 `http://127.0.0.1:9123/v1`（llama-swap · muse-glimmer-30b），
    embedding/reranker 走 `http://localhost:9123/v1`（llama-swap）。
    **没有外部 API 兜底**（2026-09-21 删除）—— 不可用时降级到规则式结果。
    **目标：零外部模型额度消耗，数据不出本地。**
@@ -65,24 +65,24 @@ wechat_ai/
 
 | 用途 | 模型名 | 端点 |
 |---|---|---|
-| Chat / 摘要 / RAG | `muse-glimmer-30b` | Muse Glimmer `http://127.0.0.1:8080/v1` |
+| Chat / 摘要 / RAG | `muse-glimmer-30b` | llama-swap `http://127.0.0.1:9123/v1` |
 | **Embedding（主）** | `text-embedding-qwen3-embedding-8b`（4096维） | **llama-swap `http://localhost:9123/v1`** |
 | Reranker | `vl-reranker-2b` | llama-swap `http://localhost:9123/v1` |
 
-**embedding/reranker 走 llama-swap 9123（CUDA 全层 GPU，2026-09-21 由 Vulkan 切换）；chat/VLM 走 8080 独立 CUDA 实例（Muse Glimmer 30B）。**
+**embedding/reranker 走 llama-swap 9123（CUDA 全层 GPU，2026-09-21 由 Vulkan 切换）；chat/VLM 与检索栈统一走 llama-swap 9123（muse-glimmer-30b 与检索模型同处一个调度器）。**
 
 ### 配置（环境变量，本地优先）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `LOCAL_LLM_BASE_URL` | `http://127.0.0.1:8080/v1` | Muse Glimmer chat 端点 |
+| `LOCAL_LLM_BASE_URL` | `http://127.0.0.1:9123/v1` | llama-swap chat 端点 |
 | `LOCAL_LLM_MODEL` | `muse-glimmer-30b` | Muse Glimmer 模型（`--alias`） |
 | `LOCAL_EMBEDDING_BASE_URL` | `http://localhost:9123/v1` | **llama-swap embedding 端点** |
 | `LOCAL_EMBEDDING_MODEL` | `text-embedding-qwen3-embedding-8b` | **llama-swap embedding 模型（4096维）** |
 
 `config/settings.json` 中的 `lmStudio.baseUrl` 与环境变量等价，环境变量优先。
 超时：本地 10s，外部 20s；远程调用用标准库 `urllib`，无第三方 SDK 依赖。
-**没有降级链**（2026-09-21 全删）：embedding 只有 9123，chat 只有 8080；
+**没有降级链**（2026-09-21 全删）：embedding 与 chat 都只有 llama-swap 9123；
 不可用即明确失败，由调用方降级到规则式结果。
 
 ### 向量索引

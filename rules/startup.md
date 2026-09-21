@@ -12,7 +12,7 @@
 | 症状 | 排查 |
 |---|---|
 | 服务启动失败 / 端口被占 | 根启动器按源码与启动身份核验；未知/过期服务拒绝复用，先核实 PID/可执行文件/源码归属再处理；日志见 `var/logs/` |
-| LLM 不可用 / 摘要没生效 | 查 8080 是否在跑（`curl 127.0.0.1:8080/health`）；不可用时摘要自动回退规则式，功能不挂 |
+| LLM 不可用 / 摘要没生效 | 查 llama-swap 9123 是否在跑（`curl 127.0.0.1:9123/running`）；不可用时摘要自动回退规则式，功能不挂 |
 | 前端白屏 | 前端改完没构建或 3108 未启动；先跑 `node scripts/verify-entry.mjs --live` |
 | 数据库锁定 / `database is locked` | WAL + 30s busy_timeout 已缓解；仍报锁通常是外部进程独占打开了 sqlite，关闭后重启 |
 | 媒体打不开 | `apps/gateway/config.json` 的 `db_dir` 没配，媒体根解析不到；`/api/assets/{id}` 依赖它 |

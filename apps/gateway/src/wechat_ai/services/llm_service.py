@@ -1,7 +1,8 @@
 """Lightweight non-streaming LLM chat completion + DB cache.
 
-只用本地推理（Muse Glimmer 8080）。本地不可达时抛 OpenAICompatibleUnavailable，
-由调用方静默降级到规则式结果。**没有外部 API 兜底**（2026-09-21 删除）。
+只用本地推理（llama-swap 9123 · muse-glimmer-30b；8080 独立实例已于 2026-09-21 甲-1 迁入 llama-swap）。
+本地不可达时抛 OpenAICompatibleUnavailable，由调用方静默降级到规则式结果。
+**没有外部 API 兜底**（2026-09-21 删除）。端点真相源：`C:\AI\memory\_canonical\LOCAL-MODELS.md`。
 """
 from __future__ import annotations
 
@@ -20,9 +21,9 @@ from ..openai_compatible import OpenAICompatibleUnavailable
 logger = logging.getLogger(__name__)
 
 # 只用本地推理；不可达即抛错，由调用方降级到规则式结果。
-# 2026-09-21：外部 API 兜底已删除（目标为零外部额度、数据不出本地）；
-#   同时把默认端点从一个已停用的死端口改为 Muse Glimmer 8080。
-LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+# 2026-09-21：外部 API 兜底已删除（目标为零外部额度、数据不出本地）。
+# 2026-09-22：默认端点改为 llama-swap 9123（甲-1 迁移后 8080 已停用）。
+LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:9123/v1")
 LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "muse-glimmer-30b")
 LLM_TIMEOUT = 30.0
 _use_local_llm = True

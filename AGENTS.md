@@ -62,7 +62,7 @@ Invoke-RestMethod http://127.0.0.1:8765/api/runtime
 | 向量索引过滤 | `apps/gateway/src/wechat_ai/services/embedding_service.py` | 大群/噪声群过滤，配置在 config/settings.json indexing 块 |
 | 向量索引吞吐/调优 | `rules/vector-index.md`「性能真相」 | 批量甜点 128、CUDA 后端稳态 ~140/s（2026-09-21 由 Vulkan ~17/s 切换）、并发无收益、WAL 已开；勿从 SQLite/WAL/批量提交理论优化 |
 | 文本清洗 | `apps/gateway/src/wechat_ai/services/message_cleaning.py` | filler 词表、打分规则 |
-| LLM/embedding 端点 | **`C:\AI\memory\_canonical\LOCAL-MODELS.md`**（本机本地模型栈唯一权威） + 本文件「LLM 集成」段 | 检索 9123 / 对话与视觉 8080。**两条轨都没有降级链**（2026-09-21 全删）—— 不可用即明确失败 |
+| LLM/embedding 端点 | **`C:\AI\memory\_canonical\LOCAL-MODELS.md`**（本机本地模型栈唯一权威） + 本文件「LLM 集成」段 | 检索与对话/视觉统一走 llama-swap 9123（唯一真相源见 LOCAL-MODELS.md）。**两条轨都没有降级链**（2026-09-21 全删）—— 不可用即明确失败 |
 | 配置改动前快照 | **`D:\01_archive\backups\orphan-snapshots-20260921\`** | `apps/gateway/config/settings.json` 的 2 个旧版快照于 2026-09-21 移入此冷归档（该文件 gitignore，**快照是旧状态的唯一记录**，故归档而非删除）。归档说明见该目录的 `.archive-note.md` |
 | 数据库 schema | `apps/gateway/src/wechat_ai/migrations/` | 原始表只读，派生表可写 |
 | RAG 问答 prompt | `apps/gateway/src/wechat_ai/system/rag-system.md` | 微信聊天 RAG 系统 prompt，改这个不改代码 |
@@ -115,7 +115,7 @@ FastAPI gateway (8912/8765)
 
 模型层：
   llama-swap 9123  <- embedding/rerank (CUDA GPU, 2026-09-21 由 Vulkan 切换)
-  Muse Glimmer 8080 <- chat/VLM (CUDA, DFlash, 常驻)
+  muse-glimmer-30b <- chat/VLM (CUDA, DFlash, ttl 900s, 与检索栈同处 9123)
 ```
 
 ### 已知技术债（2026-09-20 记录）
@@ -241,7 +241,7 @@ Node >=22.13（node:sqlite）、Python >=3.13；日志 `var/logs/`，构建 `app
 
 ## LLM 集成
 - 真相源：`rules/llm-endpoints.md`（本地模型栈、降级链、缓存异步、prompt 真相源）
-- 原则：本地模型优先，零外部 API 额度。embedding/rerank 走 llama-swap 9123（CUDA），chat/VLM 走 8080 独立 CUDA 实例（Muse Glimmer 30B，非 LM Studio）。
+- 原则：本地模型优先，零外部 API 额度。embedding/rerank 走 llama-swap 9123（CUDA），chat/VLM 走 llama-swap 9123 · muse-glimmer-30b（CUDA，非 LM Studio；8080 独立实例已于 2026-09-21 甲-1 迁入 llama-swap）。
 
 ## 禁忌（红线）
 
@@ -251,4 +251,4 @@ Node >=22.13（node:sqlite）、Python >=3.13；日志 `var/logs/`，构建 `app
 4. 不把 `key/`、`.env*`、真实 key 提交进 git。
 5. 不反向修改 Gary-UI 母源 `C:\AI\UI\gary-ui`；本仓库 `vendor/gary/` 是 vendored 副本。
 6. 不跨仓库硬编码读写 `C:\GarchOS`；走 `bridges/archos/` 契约。
-7. **不优先调用外部 LLM/embedding API**：所有模型调用（摘要、待办过滤、RAG 问答、向量索引、reranker）必须优先使用本地 CUDA 实例（chat/VLM 走 8080 Muse Glimmer，embed/rerank 走 llama-swap 9123）。**没有外部 API 兜底**（2026-09-21 删除）—— 本地不可用时降级到**规则式结果**，不是降级到别的模型。**目标：零外部模型额度消耗，数据不出本地。**
+7. **不优先调用外部 LLM/embedding API**：所有模型调用（摘要、待办过滤、RAG 问答、向量索引、reranker）必须优先使用本地 CUDA 实例（chat/VLM 与 embed/rerank 统一走 llama-swap 9123（muse-glimmer-30b 与检索模型同处一个调度器））。**没有外部 API 兜底**（2026-09-21 删除）—— 本地不可用时降级到**规则式结果**，不是降级到别的模型。**目标：零外部模型额度消耗，数据不出本地。**

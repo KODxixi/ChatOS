@@ -318,13 +318,13 @@ class MediaEnrichmentService:
 
 
 
-_VLM_URL = "http://127.0.0.1:8080/v1/chat/completions"
+_VLM_URL = "http://127.0.0.1:9123/v1/chat/completions"
 _VLM_MODEL = "muse-glimmer-30b"
 _VLM_TIMEOUT = 90
 
 
 def _vlm_image_extractor(path: Path) -> str | None:
-    """Extract text + describe image content via Muse Glimmer 30B (VLM, 8080).
+    """Extract text + describe image content via Muse Glimmer 30B (VLM, llama-swap 9123).
 
     Unlike RapidOCR (which only does OCR), a VLM understands the image:
     it describes the scene, objects, layout, and extracts all visible text

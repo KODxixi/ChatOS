@@ -33,13 +33,13 @@ export interface AgentRuntimeConfig {
 }
 
 const DEFAULT_SYSTEM_PROMPT = `你是 ChatOS 的本地 Agent 运行时，运行在用户 Gary 的 Windows 机器上。
-所有推理本地完成（Muse Glimmer 30B @ 8080），不调用外部 API。
+所有推理本地完成（llama-swap 9123 · muse-glimmer-30b），不调用外部 API。
 你可以使用提供的工具完成任务：读写文件、生成 embedding、数据质检。
 执行工具后根据结果继续推理，直到任务完成。
 回复简洁直接，中文优先，术语用英文。`;
 
 export const defaultConfig: AgentRuntimeConfig = {
-  lmStudioUrl: 'http://127.0.0.1:8080/v1',
+  lmStudioUrl: 'http://127.0.0.1:9123/v1',
   model: 'muse-glimmer-30b',
   apiKey: 'not-needed',
   embeddingUrl: 'http://localhost:9123/v1',

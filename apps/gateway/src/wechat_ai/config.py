@@ -90,9 +90,9 @@ def load_settings(
         config_path=path.resolve(),
         config_identity=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
         lm_base_url=str(
-            # 2026-09-21：默认值改为 Muse Glimmer 8080 —— 原先指向一个已停用的端口，
-            # 未配 settings.json 的 lmStudio.baseUrl 时会打到一个没人监听的地址。
-            lm_studio.get("baseUrl", "http://127.0.0.1:8080/v1")
+            # 2026-09-22：默认值改为 llama-swap 9123（甲-1 迁移后 8080 已停用）。
+            # 未配 settings.json 的 lmStudio.baseUrl 时指向 llama-swap 唯一入口。
+            lm_studio.get("baseUrl", "http://127.0.0.1:9123/v1")
         ).rstrip("/"),
         retrieval_base_url=str(
             llama_swap.get(

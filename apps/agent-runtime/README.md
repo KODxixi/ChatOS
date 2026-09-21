@@ -8,7 +8,7 @@
 前端 (chatos-console)
     ↓ WebSocket (:8913)
 Agent Runtime Server (Node.js + TypeScript)
-    ├── LocalModelClient ── HTTP/SSE ──→ Muse Glimmer :8080 (muse-glimmer-30b)
+    ├── LocalModelClient ── HTTP/SSE ──→ llama-swap :9123 (muse-glimmer-30b)
     │                                      ├── 流式文本输出
     │                                      └── tool-calling (function calling)
     ├── SessionManager (SQLite 持久化)
@@ -19,7 +19,7 @@ Agent Runtime Server (Node.js + TypeScript)
 ## 硬约束
 
 - **禁止外部模型 API**，所有推理本地
-- **Muse Glimmer 8080** `http://127.0.0.1:8080/v1`，模型 `muse-glimmer-30b`
+- **llama-swap 9123** `http://127.0.0.1:9123/v1`，模型 `muse-glimmer-30b`
 - **llama-swap** `http://localhost:9123/v1`，embedding `text-embedding-qwen3-embedding-8b`
 - 沙箱：工具只能访问 `workspaceDir` 内的文件
 - LM Studio `defaultContextLength` 需 ≥ 16384（系统提示+工具定义约 12K tokens）
@@ -47,7 +47,7 @@ npm run demo "生成一个 embedding 测试"   # 自定义 prompt
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `lmStudioUrl` | `http://127.0.0.1:8080/v1` | Muse Glimmer 端点 |
+| `lmStudioUrl` | `http://127.0.0.1:9123/v1` | llama-swap chat 端点 |
 | `model` | `muse-glimmer-30b` | 模型名 |
 | `embeddingUrl` | `http://localhost:9123/v1` | llama-swap 端点 |
 | `workspaceDir` | `~/ChatOS/workspace` | agent 工作目录（沙箱根） |

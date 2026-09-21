@@ -1,5 +1,5 @@
 {
-  "lmStudioUrl": "http://127.0.0.1:8080/v1",
+  "lmStudioUrl": "http://127.0.0.1:9123/v1",
   "model": "muse-glimmer-30b",
   "apiKey": "not-needed",
   "embeddingUrl": "http://localhost:9123/v1",

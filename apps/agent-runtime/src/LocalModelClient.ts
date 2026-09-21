@@ -73,7 +73,7 @@ export class LocalModelClient extends EventEmitter {
   constructor(config: Partial<LocalModelConfig>, registry: ToolRegistry) {
     super();
     this.config = {
-      baseUrl: config.baseUrl ?? 'http://127.0.0.1:8080/v1',
+      baseUrl: config.baseUrl ?? 'http://127.0.0.1:9123/v1',
       model: config.model ?? 'muse-glimmer-30b',
       apiKey: config.apiKey ?? 'not-needed',
       maxTokens: config.maxTokens ?? 4096,
