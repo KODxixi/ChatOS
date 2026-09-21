@@ -63,6 +63,7 @@ Invoke-RestMethod http://127.0.0.1:8765/api/runtime
 | 向量索引吞吐/调优 | rules/vector-index.md「性能真相」 | 批量甜点 128、CUDA 后端稳态 ~140/s（2026-09-21 由 Vulkan ~17/s 切换）、并发无收益、WAL 已开；勿从 SQLite/WAL/批量提交理论优化 |
 | 文本清洗 | apps/gateway/src/wechat_ai/services/message_cleaning.py | filler 词表、打分规则 |
 | LLM/embedding 端点 | **`C:\AI\memory\_canonical\LOCAL-MODELS.md`**（本机本地模型栈唯一权威） + 本文件「LLM 集成」段 | 检索 9123 / 对话与视觉 8080。**两条轨都没有降级链**（2026-09-21 全删）—— 不可用即明确失败 |
+| 配置改动前快照 | **`D:_archiveackups\orphan-snapshots-20260921\`** | `apps/gateway/config/settings.json` 的 2 个旧版快照于 2026-09-21 移入此冷归档（该文件 gitignore，**快照是旧状态的唯一记录**，故归档而非删除）。归档说明见该目录的 `.archive-note.md` |
 | 数据库 schema | apps/gateway/src/wechat_ai/migrations/ | 原始表只读，派生表可写 |
 | RAG 问答 prompt | `apps/gateway/src/wechat_ai/system/rag-system.md` | 微信聊天 RAG 系统 prompt，改这个不改代码 |
 | 对话摘要 prompt | `apps/gateway/src/wechat_ai/system/summarize-system.md` | LLM 对话摘要 system prompt |
