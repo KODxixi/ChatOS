@@ -18,15 +18,12 @@ logger = logging.getLogger(__name__)
 
 BASE = os.environ.get("LOCAL_EMBEDDING_BASE_URL", "http://localhost:9123/v1")
 MODEL = os.environ.get("LOCAL_EMBEDDING_MODEL", "text-embedding-qwen3-embedding-8b")
-KEY = os.environ.get("APIYI_API_KEY") or os.environ.get("CC_APIYI_KEY")
 BATCH = 1024
 _DIM = 4096
 _CONTEXT_LENGTH = 2048
 _MIN_TEXT_LENGTH = 4
-# fallback config (used if llama-swap unreachable)
-_FALLBACK_BASE = os.environ.get("LOCAL_EMBEDDING_FALLBACK_URL", "http://localhost:1234/v1")
-_FALLBACK_MODEL = os.environ.get("LOCAL_EMBEDDING_FALLBACK_MODEL", "text-embedding-nomic-embed-text-v1.5")
-_FALLBACK_KEY = os.environ.get("APIYI_API_KEY")
+# 降级链已于 2026-09-21 删除（两个降级源的维度都与索引不符，只会写坏数据）。
+# 若将来要加降级，**必须**是同维度的服务 —— 且保留下面那条维度校验。
 _use_local = True
 
 # background index job state
@@ -168,20 +165,25 @@ def is_available() -> bool:
 
 
 def _embed_request(texts: list[str]) -> np.ndarray:
-    """Embed texts with fallback chain: llama-swap (9123) → LM Studio (1234) → external API."""
+    r"""Embed texts via llama-swap (9123) ONLY —— 2026-09-21 起**没有降级链**。
+
+    原先的两级降级源**维度都与索引不符**（768 / 1536 维 vs 4096 维）：
+    在没有维度校验时，降级成功 = 静默写入维度不一致的向量（检索乱掉而不报错）；
+    且 `_use_local` 一旦置 False 就永久跳过本地，一个瞬时故障会永久推向错维度源。
+
+    现在：9123 不可达就**明确失败**，并在写入前校验维度。
+    宁可索引停下，也不要写进不一致的向量。
+
+    唯一真相见 C:\AI\memory\_canonical\LOCAL-MODELS.md 第六节。
+    """
     global _use_local
     tries = [
         (BASE, MODEL, "llama-swap"),
-        (_FALLBACK_BASE, _FALLBACK_MODEL, "lm-studio"),
     ]
-    if _FALLBACK_KEY:
-        tries.append(("https://api.apiyi.com/v1", "text-embedding-3-small", "apiyi"))
     last = None
     for base, model, tag in tries:
         url = f"{base}/embeddings"
         hdrs = {"Content-Type": "application/json"}
-        if "localhost" not in base and "127.0.0.1" not in base:
-            hdrs["Authorization"] = f"Bearer {_FALLBACK_KEY}"
         body = json.dumps({"model": model, "input": texts}).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
         # 5 retries with exponential backoff (2/4/8/16/32s) — llama-swap model
@@ -192,16 +194,25 @@ def _embed_request(texts: list[str]) -> np.ndarray:
                     data = json.loads(r.read())
                 if tag != "llama-swap":
                     logger.warning("embedding via %s (llama-swap unavailable)", tag)
-                return np.array([d["embedding"] for d in data["data"]], dtype=np.float32)
+                arr = np.array([d["embedding"] for d in data["data"]], dtype=np.float32)
+                # 维度必须与索引一致，否则写进去就是**静默的向量空间不一致**（检索乱掉而不报错）。
+                # 注意 RuntimeError 不在下面的 except 元组里，所以它会直接抛出、不会被重试吞掉。
+                if arr.ndim != 2 or arr.shape[1] != _DIM:
+                    raise RuntimeError(
+                        f"embedding 维度不匹配：{tag} ({base}/{model}) 返回 {arr.shape[1]} 维，"
+                        f"而索引是 {_DIM} 维 —— 已拒绝写入。检查 LOCAL_EMBEDDING_BASE_URL 指向的服务。"
+                    )
+                return arr
             except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
                 last = e
                 if attempt < 4:
                     wait = 2 ** (attempt + 1)
                     logger.info("embedding attempt %d failed (%s), retrying in %ds", attempt + 1, e, wait)
                     time.sleep(wait)
-        # Do NOT permanently disable llama-swap — model TTL-unload is transient.
+        # 不把 llama-swap 置为永久不可用 —— 模型的 TTL 卸载是瞬时的。
+        # 2026-09-21：降级链已删，所以这里**没有** fallback 可走，只能向上抛。
         if tag == "llama-swap":
-            logger.warning("llama-swap unreachable after 5 retries, falling back this batch")
+            logger.warning("llama-swap unreachable after 5 retries (no fallback configured)")
     raise RuntimeError(f"embedding failed: {last}")
 
 

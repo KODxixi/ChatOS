@@ -1,7 +1,7 @@
 """Lightweight non-streaming LLM chat completion + DB cache.
 
-Uses an OpenAI-compatible relay (APIYI / claude-haiku) when a key is present,
-and silently falls back to the caller's rule-based result on any failure.
+只用本地推理（Muse Glimmer 8080）。本地不可达时抛 OpenAICompatibleUnavailable，
+由调用方静默降级到规则式结果。**没有外部 API 兜底**（2026-09-21 删除）。
 """
 from __future__ import annotations
 
@@ -19,14 +19,11 @@ from ..openai_compatible import OpenAICompatibleUnavailable
 
 logger = logging.getLogger(__name__)
 
-# 本地优先；不可达时回退 APIYI。
-# 2026-09-21：默认值由 LM Studio(1234, 已停用) + qwen/qwen3-vl-8b(模型已删)
-#   改为 Muse Glimmer 8080。此前未设环境变量时会先打一个死端口再回退云端。
+# 只用本地推理；不可达即抛错，由调用方降级到规则式结果。
+# 2026-09-21：外部 API 兜底已删除（目标为零外部额度、数据不出本地）；
+#   同时把默认端点从一个已停用的死端口改为 Muse Glimmer 8080。
 LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
 LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "muse-glimmer-30b")
-FALLBACK_BASE = "https://api.apiyi.com/v1"
-FALLBACK_MODEL = "claude-haiku-4-5-20251001"
-LLM_KEY = os.environ.get("APIYI_API_KEY") or os.environ.get("CC_APIYI_KEY")
 LLM_TIMEOUT = 30.0
 _use_local_llm = True
 
@@ -80,11 +77,8 @@ def put_cached(
         pass
 
 
-def is_available(*, local_only: bool = False) -> bool:
-    # local LM Studio needs no key; fallback needs APIYI key
-    if local_only:
-        return _use_local_llm
-    return bool(_use_local_llm or LLM_KEY)
+def is_available(*, local_only: bool = False) -> bool:  # local_only 已无意义，保留形参兼容调用方
+    return _use_local_llm
 
 
 def _try_call(base: str, model: str, key: str | None, payload: dict) -> dict:
@@ -112,9 +106,7 @@ def complete(
 ) -> str:
     """Non-streaming chat completion. Raises OpenAICompatibleUnavailable on failure.
 
-    When *local_only* is True, only the local LM Studio endpoint is tried;
-    the external APIYI fallback is disabled (used by organize pipeline to
-    prevent chat content from being sent externally).
+    *local_only* 已无意义（没有外部路径可关），保留形参以兼容既有调用方。
     """
     payload = {
         "messages": [
@@ -130,8 +122,6 @@ def complete(
     tries = []
     if _use_local_llm:
         tries.append((LOCAL_BASE, LOCAL_MODEL, None, "local"))
-    if LLM_KEY and not local_only:
-        tries.append((FALLBACK_BASE, FALLBACK_MODEL, LLM_KEY, "apiyi"))
     for base, model, key, tag in tries:
         try:
             p = dict(payload); p["model"] = model

@@ -11,7 +11,6 @@
 | 用途 | 模型名 | 端点 | 说明 |
 |---|---|---|---|
 | **Embedding（向量索引，主）** | `text-embedding-qwen3-embedding-8b`（4096维） | llama-swap `http://localhost:9123/v1` | **CUDA** 全层 GPU（`--gpu-layers 99 -b4096 -ub4096 -fa on`），RTX 5090 |
-| **Embedding（本地降级）** | `text-embedding-nomic-embed-text-v1.5`（768维） | LM Studio `http://localhost:1234/v1` | llama-swap 不可用时降级 |
 | **Chat / RAG 问答 / 摘要** | `muse-glimmer-30b` | Muse Glimmer `http://127.0.0.1:8080/v1` | CUDA + DFlash + Vision（`--alias muse-glimmer-30b`） |
 | **Reranker（搜索重排序）** | `vl-reranker-2b` | llama-swap `http://localhost:9123/v1` | 同端点，文本+图文共用（2026-09-21 由 text-reranker-8b 换） |
 
@@ -24,22 +23,24 @@ CUDA 后 ~130–145/s（无 500 断崖）。三模型常驻合计 ~31.7GB / 余 
 
 - llama-swap 端点：`LOCAL_EMBEDDING_BASE_URL=http://localhost:9123/v1`（默认）
 - llama-swap embedding 模型：`LOCAL_EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b`
-- LM Studio 降级端点：`LOCAL_EMBEDDING_FALLBACK_URL=http://localhost:1234/v1`
-- LM Studio 降级模型：`LOCAL_EMBEDDING_FALLBACK_MODEL=text-embedding-nomic-embed-text-v1.5`
 - 本地 chat 模型：`LOCAL_LLM_MODEL=muse-glimmer-30b`（Muse Glimmer 8080）
 - 不需要 API key（本地服务无鉴权）
 - llama-swap 模型 TTL 300s 自动卸载（embedding 常驻），空闲时释放显存
-- **llama-swap 和 LM Studio 必须保持运行**；llama-swap 不可用时自动降级到 LM Studio，再不可用降级到外部 API
+- **llama-swap 必须保持运行** —— 它是 embedding 的**唯一**来源，没有降级链
 
-## 降级策略（仅本地不可用时）
+## 降级策略
 
-降级链：**llama-swap 9123 → LM Studio 1234 → 外部 APIYI**
+**没有任何降级链（2026-09-21 全部删除）。**
+
+embedding 只有 9123 一个来源：不可用即**明确失败**，并在写入前校验维度与索引一致。
+LLM/chat 只有 8080 一个来源：不可用即抛 `OpenAICompatibleUnavailable`，
+由调用方降级到**规则式结果**（这是系统既有的降级设计，不依赖任何外部服务）。
+
+**为什么删掉外部/异维度降级**：原先的降级源维度都与索引不符（768 / 1536 维 vs 4096 维），
+降级成功 = **静默写入维度不一致的向量**；且一次瞬时故障会让状态位把后续请求永久
+推向错维度源。**宁可索引停下，也不要写进不一致的数据。**
 - 第一级：llama-swap `text-embedding-qwen3-embedding-8b`（4096维，主）
-- 第二级：LM Studio `text-embedding-nomic-embed-text-v1.5`（768维，本地降级）
-- 第三级：APIYI 中继 `https://api.apiyi.com/v1`，模型 `text-embedding-3-small`
-- 密钥：环境变量 `APIYI_API_KEY`（或 `CC_APIYI_KEY`）
-- **降级是最后的手段**：优先确保 llama-swap 运行，其次 LM Studio，最后才外部
-- 降级到不同维度模型时，搜索结果可能不准确（向量空间不兼容），应尽快恢复主模型
+- **优先确保 llama-swap 运行** —— 它是 embedding 的唯一来源
 - 启动时检查本地端点可用性，日志中明确标注当前使用的是哪个端点
 
 ## 缓存与异步
