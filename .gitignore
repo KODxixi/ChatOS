@@ -58,3 +58,6 @@ apps/gateway/decrypted/*.db-wal
 apps/gateway/decrypted/*.db-shm
 
 apps/gateway/decrypted/*
+
+# 改动前的快照文件，一次性、可重生成，不入库
+*.bak-*

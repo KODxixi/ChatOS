@@ -60,6 +60,8 @@ wechat_ai/
 
 ### 本地模型栈
 
+> 本地模型端点的**唯一权威**：`C:\AI\memory\_canonical\LOCAL-MODELS.md`。下表只列本服务**实际读的环境变量与默认值**。
+
 | 用途 | 模型名 | 端点 |
 |---|---|---|
 | Chat / 摘要 / RAG | `muse-glimmer-30b` | Muse Glimmer `http://127.0.0.1:8080/v1` |

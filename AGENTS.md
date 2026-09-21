@@ -62,7 +62,7 @@ Invoke-RestMethod http://127.0.0.1:8765/api/runtime
 | 向量索引过滤 | apps/gateway/src/wechat_ai/services/embedding_service.py | 大群/噪声群过滤，配置在 config/settings.json indexing 块 |
 | 向量索引吞吐/调优 | rules/vector-index.md「性能真相」 | 批量甜点 128、CUDA 后端稳态 ~140/s（2026-09-21 由 Vulkan ~17/s 切换）、并发无收益、WAL 已开；勿从 SQLite/WAL/批量提交理论优化 |
 | 文本清洗 | apps/gateway/src/wechat_ai/services/message_cleaning.py | filler 词表、打分规则 |
-| LLM/embedding 端点 | 本文件「LLM 集成」段 + local-model skill | llama-swap 9123 / LM Studio 降级链 |
+| LLM/embedding 端点 | **`C:\AI\memory\_canonical\LOCAL-MODELS.md`**（本机本地模型栈唯一权威） + 本文件「LLM 集成」段 | 检索 9123 / 对话与视觉 8080。⚠️ LM Studio 1234 降级链**已失效且有害**（768 维 vs 索引 4096 维，会静默写入不一致向量）—— 见 LOCAL-MODELS.md 第七节第 4 条 |
 | 数据库 schema | apps/gateway/src/wechat_ai/migrations/ | 原始表只读，派生表可写 |
 | RAG 问答 prompt | `apps/gateway/src/wechat_ai/system/rag-system.md` | 微信聊天 RAG 系统 prompt，改这个不改代码 |
 | 对话摘要 prompt | `apps/gateway/src/wechat_ai/system/summarize-system.md` | LLM 对话摘要 system prompt |
