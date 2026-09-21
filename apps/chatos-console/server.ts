@@ -28,7 +28,7 @@ const runtimeIdentity = isProduction ? Object.freeze({
   ...captureUiRuntime(repositoryRoot, __CHATOS_BUILD__, __filename),
   pid: process.pid, cwd: process.cwd(), startedAt: new Date().toISOString(),
 }) : { service: 'chatos-console-dev', sourceRoot: consoleRoot };
-const LOCAL_LLM_BASE_URL = (process.env.LOCAL_LLM_BASE_URL || 'http://127.0.0.1:8080/v1').replace(/\/+$/, '');
+const LOCAL_LLM_BASE_URL = (process.env.LOCAL_LLM_BASE_URL || 'http://127.0.0.1:9123/v1').replace(/\/+$/, '');
 const LOCAL_LLM_MODEL = process.env.LOCAL_LLM_MODEL || 'muse-glimmer-30b';
 const localLlmHostname = new URL(LOCAL_LLM_BASE_URL).hostname;
 const localLlmIsLoopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(localLlmHostname);
