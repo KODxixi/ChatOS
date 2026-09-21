@@ -1,6 +1,6 @@
 {
-  "lmStudioUrl": "http://localhost:1234/v1",
-  "model": "qwen/qwen3-vl-8b",
+  "lmStudioUrl": "http://127.0.0.1:8080/v1",
+  "model": "muse-glimmer-30b",
   "apiKey": "not-needed",
   "embeddingUrl": "http://localhost:9123/v1",
   "embeddingModel": "text-embedding-qwen3-embedding-8b",

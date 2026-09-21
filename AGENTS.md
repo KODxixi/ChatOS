@@ -60,19 +60,20 @@ Invoke-RestMethod http://127.0.0.1:8765/api/runtime
 |---|---|---|
 | 启动/运维 | 本文件 + C:\AI\memory\_canonical\TOOLS.md | 启动前杀旧进程、端口/锁管理 |
 | 向量索引过滤 | apps/gateway/src/wechat_ai/services/embedding_service.py | 大群/噪声群过滤，配置在 config/settings.json indexing 块 |
+| 向量索引吞吐/调优 | rules/vector-index.md「性能真相」 | 批量甜点 128、CUDA 后端稳态 ~140/s（2026-09-21 由 Vulkan ~17/s 切换）、并发无收益、WAL 已开；勿从 SQLite/WAL/批量提交理论优化 |
 | 文本清洗 | apps/gateway/src/wechat_ai/services/message_cleaning.py | filler 词表、打分规则 |
 | LLM/embedding 端点 | 本文件「LLM 集成」段 + local-model skill | llama-swap 9123 / LM Studio 降级链 |
 | 数据库 schema | apps/gateway/src/wechat_ai/migrations/ | 原始表只读，派生表可写 |
 | RAG 问答 prompt | `apps/gateway/src/wechat_ai/system/rag-system.md` | 微信聊天 RAG 系统 prompt，改这个不改代码 |
 | 对话摘要 prompt | `apps/gateway/src/wechat_ai/system/summarize-system.md` | LLM 对话摘要 system prompt |
 | 待办过滤 prompt | `apps/gateway/src/wechat_ai/system/todo-filter-system.md` | LLM 待办事项过滤 system prompt |
-| 语义提取 prompt | `apps/gateway/src/wechat_ai/system/semantic-extract-system.md` + `semantic-extract-task.md` | 知识图谱实体提取 prompt |
+| 语义提取 prompt | `apps/gateway/src/wechat_ai/system/semantic-extract-system.md` + `apps/gateway/src/wechat_ai/system/semantic-extract-task.md` | 知识图谱实体提取 prompt |
 ## 唯一维护的源码与入口
 
 - 正式 UI：`apps/chatos-console`，来自原型 commit `e9d78e9c3f1c216c668a4810fe890d764131b88a`；Vite + React + Express，`http://127.0.0.1:3108/`。
 - 正式网关：`apps/gateway`，FastAPI，8912 保留全部 API；网页入口按本地配置跳转正式 UI。
 - 统一启动：`scripts/start_chatos.bat` → Node 标准库 `scripts/start_chatos.mjs`。无需 PowerShell 执行策略修改。
-- 唯一运行配置：`apps/gateway/config/settings.json`；模板同目录 `settings.example.json`。`libraryDb` 同时供 UI 只读适配与网关使用，`frontendUrl` 指向正式 UI。
+- 唯一运行配置：`apps/gateway/config/settings.json`；模板同目录 `apps/gateway/config/settings.example.json`。`libraryDb` 同时供 UI 只读适配与网关使用，`frontendUrl` 指向正式 UI。
 - 历史原型及旧前端展开目录已清理，3000 旧实例已停；不重新创建第二套 UI。历史只从 Git 或 `var/backups/canonical-entry-20260917/` 的既有 zip/bundle 回溯。
 - 默认门控：`node scripts/verify-entry.mjs` 检查源码、构建、配置；`--live` 额外核验两项服务的启动身份、跳转与线上 HTML/assets。
 
@@ -112,8 +113,8 @@ FastAPI gateway (8912/8765)
     +-- kb_chatos (15,142 chunks)                       [文件类向量]
 
 模型层：
-  llama-swap 9123  <- embedding/rerank (Vulkan GPU)
-  LM Studio 1234   <- chat/VLM fallback (CUDA)
+  llama-swap 9123  <- embedding/rerank (CUDA GPU, 2026-09-21 由 Vulkan 切换)
+  Muse Glimmer 8080 <- chat/VLM (CUDA, DFlash, 常驻; LM Studio 1234 仅降级)
 ```
 
 ### 已知技术债（2026-09-20 记录）
@@ -170,7 +171,7 @@ created_at  INTEGER NOT NULL
 expires_at  INTEGER                -- 可空；非空且过期会被 GC 删除
 ```
 
-**`projects`**（由 `services/project_extractor.py` + gchat 派生）：从 project 类会话聚类，
+**`projects`**（由 `apps/gateway/src/wechat_ai/services/project_extractor.py` + gchat 派生）：从 project 类会话聚类，
 含 `project_id`、`project_name`、消息数、决策/里程碑/甲方反馈计数。
 
 关系：`conversations 1—N messages`；`messages 1—N message_parts/assets`；
@@ -207,7 +208,7 @@ expires_at  INTEGER                -- 可空；非空且过期会被 GC 删除
 | POST | `/api/knowledge/archive` | 归档知识（文件+链接落盘） |
 | POST | `/api/ask/stream` | 两阶段 RAG 流式问答（高级） |
 
-错误响应统一由 `api/_errors.py` 构造；未捕获异常由全局 handler 包成 JSON。
+错误响应统一由 `apps/gateway/src/wechat_ai/api/_errors.py` 构造；未捕获异常由全局 handler 包成 JSON。
 
 ## 开发流程
 
@@ -233,13 +234,13 @@ Node >=22.13（node:sqlite）、Python >=3.13；日志 `var/logs/`，构建 `app
 ## 代码与设计规范
 
 保留 e9d78e9 原型现有 React/Express 与 Gary-UI 视觉；不要恢复旧组件树、迁整套适配到 Python、或顺手重设计。新增样式复用现有 token，禁止反向修改 Gary-UI 母源。
-前端状态在 `src/context/ChatOSContext.tsx`，HTTP 适配在 `server.ts`；会话读取 SQLite 为只读，其余演示状态在浏览器/进程内存中。
+前端状态在 `src/context/ChatOSContext.tsx`，HTTP 适配在 `apps/chatos-console/server.ts`；会话读取 SQLite 为只读，其余演示状态在浏览器/进程内存中。
 后端继续按 `api/`、`services/`、`plugins/` 分层；错误走已有 helper，保持本地会话保护。
 新非平凡逻辑先 RED 再 GREEN；HTTP/资源验证不能替代浏览器视觉验收。
 
 ## LLM 集成
 - 真相源：`rules/llm-endpoints.md`（本地模型栈、降级链、缓存异步、prompt 真相源）
-- 原则：本地模型优先，零外部 API 额度。embedding/rerank 走 llama-swap 9123，chat/VLM 走 LM Studio 1234。
+- 原则：本地模型优先，零外部 API 额度。embedding/rerank 走 llama-swap 9123（CUDA），chat/VLM 走 8080 独立 CUDA 实例（Muse Glimmer 30B，非 LM Studio）。
 
 ## 禁忌（红线）
 
@@ -249,4 +250,4 @@ Node >=22.13（node:sqlite）、Python >=3.13；日志 `var/logs/`，构建 `app
 4. 不把 `key/`、`.env*`、真实 key 提交进 git。
 5. 不反向修改 Gary-UI 母源 `C:\AI\UI\gary-ui`；本仓库 `vendor/gary/` 是 vendored 副本。
 6. 不跨仓库硬编码读写 `C:\GarchOS`；走 `bridges/archos/` 契约。
-7. **不优先调用外部 LLM/embedding API**：所有模型调用（摘要、待办过滤、RAG 问答、向量索引、reranker）必须优先使用本地 LM Studio（`http://localhost:1234/v1`）。外部 API（APIYI 等）仅在本地服务不可用时作为降级 fallback，且必须在日志中明确标注。**目标：零外部模型额度消耗，数据不出本地。**
+7. **不优先调用外部 LLM/embedding API**：所有模型调用（摘要、待办过滤、RAG 问答、向量索引、reranker）必须优先使用本地 CUDA 实例（chat/VLM 走 8080 Muse Glimmer，embed/rerank 走 llama-swap 9123）。外部 API（APIYI 等）仅在本地服务不可用时作为降级 fallback，且必须在日志中明确标注。**目标：零外部模型额度消耗，数据不出本地。**

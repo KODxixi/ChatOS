@@ -12,7 +12,8 @@ from urllib.request import Request, urlopen
 
 OpenRequest = Callable[..., Any]
 
-_DEFAULT_MODEL = "text-reranker-8b"
+_DEFAULT_MODEL = "vl-reranker-2b"  # 2026-09-21: text-reranker-8b 已从 llama-swap 摘除（与常驻 30B 显存冲突），
+                                   # 改由 vl-reranker-2b 兼任文本精排；沿用旧 id 会 404
 
 
 class RerankerUnavailable(RuntimeError):

@@ -6,13 +6,15 @@
 
 | 用途 | 模型名 | 端点 | 说明 |
 |---|---|---|---|
-| **Embedding（向量索引，主）** | `text-embedding-qwen3-embedding-8b`（4096维） | llama-swap `http://localhost:9123/v1` | Vulkan 全层 GPU（-ngl 99），RTX 5090 |
+| **Embedding（向量索引，主）** | `text-embedding-qwen3-embedding-8b`（4096维） | llama-swap `http://localhost:9123/v1` | **CUDA** 全层 GPU（`--gpu-layers 99 -b4096 -ub4096 -fa on`），RTX 5090 |
 | **Embedding（本地降级）** | `text-embedding-nomic-embed-text-v1.5`（768维） | LM Studio `http://localhost:1234/v1` | llama-swap 不可用时降级 |
-| **Chat / RAG 问答 / 摘要** | `qwen/qwen3-vl-8b` | LM Studio `http://localhost:1234/v1` | CUDA，视觉理解+对话 |
-| **Reranker（搜索重排序）** | `text-reranker-8b` | llama-swap `http://localhost:9123/v1` | 同端点，混合检索精排 |
+| **Chat / RAG 问答 / 摘要** | `muse-glimmer-30b` | Muse Glimmer `http://127.0.0.1:8080/v1` | CUDA + DFlash + Vision（`--alias muse-glimmer-30b`） |
+| **Reranker（搜索重排序）** | `vl-reranker-2b` | llama-swap `http://localhost:9123/v1` | 同端点，文本+图文共用（2026-09-21 由 text-reranker-8b 换） |
 
-**关键区分**：embedding/reranker 走 **llama-swap 9123**（Vulkan，文本模型常驻 GPU）；
-chat/VLM 走 **LM Studio 1234**（CUDA，按需加载）。两个服务独立运行，互不抢占显存。
+**关键区分（2026-09-21 全量切 CUDA）**：embedding/reranker 与 chat 主模型现在**都在 CUDA** 上共驻同一张 5090 D。
+embedding/reranker 由 llama-swap 9123 拉起 `llama.cpp-cuda`；chat 由 8080 独立 CUDA 实例提供。
+切 CUDA 的原因：embedding 是批量 prefill（矩阵-矩阵），Vulkan 在 NVIDIA 上拿不到 Tensor Core，实测逐条跑 ~17/s；
+CUDA 后 ~130–145/s（无 500 断崖）。三模型常驻合计 ~31.7GB / 余 ~0.5GB，**不要再开第四个吃显存的程序**。
 
 ## 配置
 
@@ -20,7 +22,7 @@ chat/VLM 走 **LM Studio 1234**（CUDA，按需加载）。两个服务独立运
 - llama-swap embedding 模型：`LOCAL_EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b`
 - LM Studio 降级端点：`LOCAL_EMBEDDING_FALLBACK_URL=http://localhost:1234/v1`
 - LM Studio 降级模型：`LOCAL_EMBEDDING_FALLBACK_MODEL=text-embedding-nomic-embed-text-v1.5`
-- 本地 chat 模型：`LOCAL_LLM_MODEL=qwen/qwen3-vl-8b`（LM Studio）
+- 本地 chat 模型：`LOCAL_LLM_MODEL=muse-glimmer-30b`（Muse Glimmer 8080）
 - 不需要 API key（本地服务无鉴权）
 - llama-swap 模型 TTL 300s 自动卸载（embedding 常驻），空闲时释放显存
 - **llama-swap 和 LM Studio 必须保持运行**；llama-swap 不可用时自动降级到 LM Studio，再不可用降级到外部 API

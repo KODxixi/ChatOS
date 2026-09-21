@@ -97,7 +97,7 @@ Chatbox 是证据检索和知识投影来源，不是自动派单器。优先使
 即使 API 可调用，也不等于已获本次授权；每次操作仍受运行时能力声明约束。
 """ + "\n## Local WeChat RAG answer mode\n\n" + LOCAL_WECHAT_RAG_SYSTEM_PROMPT + """
 
-检索模型职责固定：模型 ID `text-embedding-qwen3-embedding-8b` 只用于向量召回；模型 ID `text-reranker-8b` 只用于精排打分。二者都不是答案生成模型，不得用于生成最终回答。
+检索模型职责固定：模型 ID `text-embedding-qwen3-embedding-8b` 只用于向量召回；模型 ID `vl-reranker-2b`（2026-09-21 起兼任文本精排，原 text-reranker-8b 已摘除）只用于精排打分。二者都不是答案生成模型，不得用于生成最终回答。
 
 检索上下文注入格式：
 

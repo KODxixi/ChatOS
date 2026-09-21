@@ -62,7 +62,7 @@ def _write_registry(knowledge_root: Path) -> None:
         "    dimensions: 4096\n"
         "  rerank:\n"
         "    base_url: http://127.0.0.1:9123\n"
-        "    model: text-reranker-8b\n"
+        "    model: vl-reranker-2b\n"
         "vector_store:\n"
         "  type: lancedb\n"
         "knowledge_bases:\n"

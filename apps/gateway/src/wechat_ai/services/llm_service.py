@@ -19,9 +19,11 @@ from ..openai_compatible import OpenAICompatibleUnavailable
 
 logger = logging.getLogger(__name__)
 
-# Prefer local LM Studio; fall back to APIYI if unreachable.
-LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:1234/v1")
-LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen/qwen3-vl-8b")
+# 本地优先；不可达时回退 APIYI。
+# 2026-09-21：默认值由 LM Studio(1234, 已停用) + qwen/qwen3-vl-8b(模型已删)
+#   改为 Muse Glimmer 8080。此前未设环境变量时会先打一个死端口再回退云端。
+LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "muse-glimmer-30b")
 FALLBACK_BASE = "https://api.apiyi.com/v1"
 FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 LLM_KEY = os.environ.get("APIYI_API_KEY") or os.environ.get("CC_APIYI_KEY")
@@ -104,7 +106,8 @@ def complete(
     user_message: str,
     *,
     temperature: float = 0.2,
-    max_tokens: int = 400,
+    max_tokens: int = 4096,  # 2026-09-21: 本地模型是推理模型，先出 reasoning_content；
+                             # 400 会被 reasoning 吃光导致 content 为空（且空串不抛异常、跳过云端兜底）
     local_only: bool = False,
 ) -> str:
     """Non-streaming chat completion. Raises OpenAICompatibleUnavailable on failure.
@@ -132,6 +135,9 @@ def complete(
     for base, model, key, tag in tries:
         try:
             p = dict(payload); p["model"] = model
+            if tag == "local":
+                # 本地是推理模型；low 已够（archlib 打标实测参数），并显著缩短 reasoning
+                p["reasoning_effort"] = "low"
             data = _try_call(base, model, key, p)
             return data["choices"][0]["message"]["content"].strip()
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as exc:
@@ -148,7 +154,7 @@ def summarize(messages_text: str) -> str | None:
     from ..rag_prompt import load_system_prompt
     system = load_system_prompt("summarize-system")
     try:
-        out = complete(system, messages_text, max_tokens=150, temperature=0.2)
+        out = complete(system, messages_text, max_tokens=4096, temperature=0.2)
     except OpenAICompatibleUnavailable:
         return None
     out = out.strip().strip('"“”').strip()
@@ -178,7 +184,7 @@ def filter_todos(
         from ..rag_prompt import load_system_prompt
     system = load_system_prompt("todo-filter-system")
     lines = "\n".join(f"{i}. {it['text']}" for i, it in enumerate(items))
-    raw = complete(system, lines, max_tokens=800, temperature=0.1, local_only=local_only)
+    raw = complete(system, lines, max_tokens=4096, temperature=0.1, local_only=local_only)
     raw = raw.strip()
     start = raw.find("[")
     end = raw.rfind("]")

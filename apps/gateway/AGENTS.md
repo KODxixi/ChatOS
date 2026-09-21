@@ -62,19 +62,19 @@ wechat_ai/
 
 | 用途 | 模型名 | 端点 |
 |---|---|---|
-| Chat / 摘要 / RAG | `qwen/qwen3-vl-8b` | LM Studio `http://localhost:1234/v1` |
+| Chat / 摘要 / RAG | `muse-glimmer-30b` | Muse Glimmer `http://127.0.0.1:8080/v1` |
 | **Embedding（主）** | `text-embedding-qwen3-embedding-8b`（4096维） | **llama-swap `http://localhost:9123/v1`** |
 | Embedding（降级） | `text-embedding-nomic-embed-text-v1.5`（768维） | LM Studio `http://localhost:1234/v1` |
-| Reranker | `text-reranker-8b` | llama-swap `http://localhost:9123/v1` |
+| Reranker | `vl-reranker-2b` | llama-swap `http://localhost:9123/v1` |
 
-**embedding/reranker 走 llama-swap 9123（Vulkan 全层 GPU）；chat/VLM 走 LM Studio 1234（CUDA）。**
+**embedding/reranker 走 llama-swap 9123（CUDA 全层 GPU，2026-09-21 由 Vulkan 切换）；chat/VLM 走 8080 独立 CUDA 实例（Muse Glimmer 30B）。**
 
 ### 配置（环境变量，本地优先）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `LOCAL_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio chat 端点 |
-| `LOCAL_LLM_MODEL` | `qwen/qwen3-vl-8b` | LM Studio chat 模型 |
+| `LOCAL_LLM_BASE_URL` | `http://127.0.0.1:8080/v1` | Muse Glimmer chat 端点 |
+| `LOCAL_LLM_MODEL` | `muse-glimmer-30b` | Muse Glimmer 模型（`--alias`） |
 | `LOCAL_EMBEDDING_BASE_URL` | `http://localhost:9123/v1` | **llama-swap embedding 端点** |
 | `LOCAL_EMBEDDING_MODEL` | `text-embedding-qwen3-embedding-8b` | **llama-swap embedding 模型（4096维）** |
 | `LOCAL_EMBEDDING_FALLBACK_URL` | `http://localhost:1234/v1` | LM Studio 降级端点 |
@@ -93,7 +93,7 @@ wechat_ai/
 - **主模型**：`text-embedding-qwen3-embedding-8b`（4096维），llama-swap 9123
 - embedding 服务独立于 llm_service，但复用相同的本地优先+降级策略
 - **embedding 模型切换时必须清除旧向量重新索引**（维度不同不能混用，768↔4096）
-- 批量 128 条/请求（`index_conversation`），GPU 加速约 2500 条/分钟
+- 批量 128 条/请求（`indexing.batchSize` → `index_conversation`），实测吞吐天花板 ~17 条/秒（~1000 条/分钟）。批量 >256 会断崖、并发无收益、WAL 早已开启，详见仓库根 `rules/vector-index.md`「性能真相」，勿从 SQLite/批量提交理论优化
 
 #### 索引过滤规则（硬约束）
 

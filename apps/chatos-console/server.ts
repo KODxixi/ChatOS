@@ -28,8 +28,8 @@ const runtimeIdentity = isProduction ? Object.freeze({
   ...captureUiRuntime(repositoryRoot, __CHATOS_BUILD__, __filename),
   pid: process.pid, cwd: process.cwd(), startedAt: new Date().toISOString(),
 }) : { service: 'chatos-console-dev', sourceRoot: consoleRoot };
-const LOCAL_LLM_BASE_URL = (process.env.LOCAL_LLM_BASE_URL || 'http://127.0.0.1:1234/v1').replace(/\/+$/, '');
-const LOCAL_LLM_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen/qwen3-vl-8b';
+const LOCAL_LLM_BASE_URL = (process.env.LOCAL_LLM_BASE_URL || 'http://127.0.0.1:8080/v1').replace(/\/+$/, '');
+const LOCAL_LLM_MODEL = process.env.LOCAL_LLM_MODEL || 'muse-glimmer-30b';
 const localLlmHostname = new URL(LOCAL_LLM_BASE_URL).hostname;
 const localLlmIsLoopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(localLlmHostname);
 
@@ -640,12 +640,14 @@ app.post('/api/local-model/thinking-analysis', async (req, res) => {
     const completionResponse = await fetch(`${LOCAL_LLM_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(45_000),   // 2026-09-21: 30B 是推理模型，先烧 reasoning；
+                                            // 原 10s 配 600 token 会在长上下文下被 abort 或返回空 content
       body: JSON.stringify({
         model: LOCAL_LLM_MODEL,
         stream: false,
         temperature: 0.2,
-        max_tokens: 600,
+        max_tokens: 2048,
+        reasoning_effort: 'low',
         messages: [
           {
             role: 'system',

@@ -92,7 +92,7 @@ test('local model requests never follow redirects', async () => {
     leakedRequests += 1;
     if (req.url?.endsWith('/models')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ data: [{ id: 'qwen/qwen3-vl-8b' }] }));
+      res.end(JSON.stringify({ data: [{ id: 'muse-glimmer-30b' }] }));
     } else if (req.url?.endsWith('/embeddings')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ data: [{ embedding: [1] }] }));
