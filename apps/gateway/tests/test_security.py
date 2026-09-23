@@ -196,7 +196,8 @@ def test_security_headers_apply_to_success_and_error_responses() -> None:
         assert "default-src 'self'" in csp
         assert "base-uri 'none'" in csp
         assert "object-src 'none'" in csp
-        assert "frame-ancestors 'none'" in csp
+        assert "frame-ancestors 'self' http://localhost:* http://127.0.0.1:*" in csp
+        assert "evil.example" not in csp
         assert "script-src 'self'" in csp
         assert "'unsafe-eval'" not in csp
         assert "'wasm-unsafe-eval'" not in csp

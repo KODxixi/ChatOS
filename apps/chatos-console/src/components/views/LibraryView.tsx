@@ -87,7 +87,7 @@ export const LibraryView: React.FC = () => {
   const indexSummary = knowledgeIndexStatus.status === 'running'
     ? (knowledgeIndexStatus.stage === 'archive' ? '正在整理媒体与证据清单' : 'local-model 正在生成本地向量')
     : knowledgeIndexStatus.status === 'completed'
-      ? `已索引 ${stats.files_indexed ?? stats.documentsWritten ?? 0} 个文档 · ${stats.chunks_indexed ?? 0} 个片段`
+      ? `已索引 ${stats.files_discovered ?? stats.files_indexed ?? stats.documentsWritten ?? 0} 个文档 · ${stats.total_chunks_in_store ?? stats.chunks_indexed ?? 0} 个片段`
       : knowledgeIndexStatus.status === 'failed'
         ? `索引失败：${knowledgeIndexStatus.error || '未知错误'}`
         : knowledgeIndexStatus.status === 'interrupted'

@@ -93,8 +93,9 @@ def test_asset_content_requires_resolved_safe_local_file(tmp_path: Path) -> None
     client = _client(database_path, asset_root)
 
     unresolved = client.get(f"/api/assets/{asset_id}")
-    assert unresolved.status_code == 409
-    assert unresolved.json()["error"]["code"] == "ASSET_UNRESOLVED"
+    assert unresolved.status_code == 200
+    assert unresolved.headers["content-type"] == "image/png"
+    assert unresolved.content.startswith(b"\x89PNG\r\n\x1a\n")
     assert "local_path" not in unresolved.text
 
     encrypted_path = asset_root / "encrypted" / "board.dat"
@@ -121,7 +122,7 @@ def test_asset_content_requires_resolved_safe_local_file(tmp_path: Path) -> None
     assert archived_unresolved["readinessState"] == "discovered"
     assert archived_unresolved["hasLocalFile"] is True
     assert archived_unresolved["contentUrl"] is None
-    assert client.get(f"/api/assets/{asset_id}").status_code == 409
+    assert client.get(f"/api/assets/{asset_id}").content == unresolved.content
 
     image_path = asset_root / "images" / "board.png"
     image_path.parent.mkdir()

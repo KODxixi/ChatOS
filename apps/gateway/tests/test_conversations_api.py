@@ -243,7 +243,6 @@ def test_summary_retains_ten_source_backed_important_messages(
         connection.commit()
 
     monkeypatch.setattr(llm_service, "_use_local_llm", False)
-    monkeypatch.setattr(llm_service, "LLM_KEY", None)
     client, _ = _make_client(database_path)
 
     response = client.get("/api/conversations/alpha/summary")

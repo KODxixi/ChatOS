@@ -611,12 +611,9 @@ def create_conversations_router(
 
         Generates project-brief.md files in the vault for syncing to ArchOS.
         """
-        from pathlib import Path
-        from ..config import load_settings
-        settings = load_settings()
-        vault_root = settings.library_db.parent.parent.parent
         with closing(connection_factory()) as connection:
             connection.row_factory = sqlite3.Row
+            vault_root = Path(connection.execute("PRAGMA database_list").fetchone()[2]).parent.parent.parent
             projects = extract_projects(
                 connection, vault_root=vault_root, min_messages=minMessages,
             )
@@ -635,16 +632,14 @@ def create_conversations_router(
             ],
         }
 
-    @router.get("/projects")
+    @router.get("/conversations/projects")
     def list_projects(
         minMessages: Annotated[int, Query(ge=0, le=100000)] = 10,
     ) -> dict[str, object]:
         """List projects extracted from project-domain conversations."""
-        from ..config import load_settings
-        settings = load_settings()
-        vault_root = settings.library_db.parent.parent.parent
         with closing(connection_factory()) as connection:
             connection.row_factory = sqlite3.Row
+            vault_root = Path(connection.execute("PRAGMA database_list").fetchone()[2]).parent.parent.parent
             projects = extract_projects(
                 connection,
                 vault_root=vault_root,

@@ -1,4 +1,4 @@
-"""Lightweight non-streaming LLM chat completion + DB cache.
+r"""Lightweight non-streaming LLM chat completion + DB cache.
 
 只用本地推理（llama-swap 9123 · muse-glimmer-30b；8080 独立实例已于 2026-09-21 甲-1 迁入 llama-swap）。
 本地不可达时抛 OpenAICompatibleUnavailable，由调用方静默降级到规则式结果。

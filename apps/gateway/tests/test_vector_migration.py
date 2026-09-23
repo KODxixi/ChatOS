@@ -32,7 +32,13 @@ def test_shadow_migration_is_bound_and_preserves_source(tmp_path, monkeypatch, o
     knowledge = db.parent / "knowledge"
     (knowledge / "index").mkdir(parents=True)
     (knowledge / "index/sample.md").write_text("synthetic architecture text", encoding="utf-8")
-    (knowledge / "local-model-registry.yaml").write_text("old-registry", encoding="utf-8")
+    old_registry = {
+        "text_backend": {"embedding": {"model": "old", "dimensions": 4096}},
+        "knowledge_bases": {"chatos": {
+            "root": str(knowledge / "index"), "dimensions": 4096, "embed_model": "old",
+        }},
+    }
+    (knowledge / "local-model-registry.yaml").write_text(yaml.safe_dump(old_registry), encoding="utf-8")
     (knowledge / "lancedb").mkdir()
     (knowledge / "lancedb/old-marker").touch()
     with closing(sqlite3.connect(db)) as conn:
@@ -54,15 +60,15 @@ def test_shadow_migration_is_bound_and_preserves_source(tmp_path, monkeypatch, o
     migration.prepare(work, settings)  # Resumes without adding duplicate rows.
     with closing(sqlite3.connect(work / "vectors.sqlite")) as conn:
         assert conn.execute("SELECT COUNT(*) FROM message_embeddings").fetchone()[0] == 1
-    registry = {"knowledge_bases": {"chatos": {
-        "root": str(knowledge / "index"), "dimensions": 1024, "embed_model": migration.MODEL,
-    }}}
-    (work / "registry-1024.yaml").write_text(yaml.safe_dump(registry), encoding="utf-8")
+    registry = yaml.safe_load((work / "registry-1024.yaml").read_text(encoding="utf-8"))
+    assert registry["knowledge_bases"]["chatos"]["dimensions"] == 1024
+    assert registry["text_backend"]["embedding"]["model"] == migration.MODEL
     schema = pa.schema([pa.field("vector", pa.list_(pa.float32(), 1024)), pa.field("model", pa.string())])
     table = lancedb.connect(work / "lancedb").create_table("kb_chatos", schema=schema)
     table.add([{"vector": [1.0] + [0.0] * 1023, "model": migration.MODEL}])
     del table
-    report = {"files_failed": int(outcome == "file_failed"), "total_chunks_in_store": 1, "errors": []}
+    report = {"files_discovered": 1, "files_indexed": 1, "files_skipped_unchanged": 0,
+              "files_failed": int(outcome == "file_failed"), "total_chunks_in_store": 1, "errors": []}
     (work / "file-index-report.json").write_text(json.dumps(report), encoding="utf-8")
 
     if outcome == "source_changed":
@@ -81,11 +87,14 @@ def test_shadow_migration_is_bound_and_preserves_source(tmp_path, monkeypatch, o
         migration.cutover(work, settings)
         assert (work / "previous-lancedb/old-marker").exists()
         assert json.loads(settings.read_text())["indexing"]["dimensions"] == 1024
+        assert json.loads((knowledge / "index-status.json").read_text())["stats"] == {
+            "files_discovered": 1, "total_chunks_in_store": 1,
+        }
     else:
         with pytest.raises((RuntimeError, OSError)):
             migration.cutover(work, settings)
         assert settings.read_bytes() == original_settings
-        assert (knowledge / "local-model-registry.yaml").read_text() == "old-registry"
+        assert yaml.safe_load((knowledge / "local-model-registry.yaml").read_text()) == old_registry
         assert (knowledge / "lancedb/old-marker").exists()
     with closing(sqlite3.connect(db)) as conn:
         assert conn.execute("SELECT status FROM message_embeddings WHERE message_id='2'").fetchone()[0] == "pending"

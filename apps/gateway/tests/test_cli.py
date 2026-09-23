@@ -11,6 +11,23 @@ from typer.testing import CliRunner
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _isolate_settings(monkeypatch, tmp_path: Path) -> None:
+    from wechat_ai import config
+
+    monkeypatch.setattr(
+        config,
+        "load_settings",
+        lambda: config.Settings(
+            project_root=tmp_path,
+            source_dir=tmp_path / "decrypted",
+            library_db=tmp_path / "library.sqlite",
+            output_dir=tmp_path / "output",
+            web_dist=tmp_path / "web",
+            lm_base_url="http://127.0.0.1:9123/v1",
+        ),
+    )
+
+
 def test_project_exposes_python_313_chatbox_release_contract() -> None:
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text("utf-8"))
 
@@ -25,16 +42,17 @@ def test_project_exposes_python_313_chatbox_release_contract() -> None:
     ]
 
 
-def test_serve_binds_uvicorn_to_loopback_and_honors_options(monkeypatch) -> None:
+def test_serve_binds_uvicorn_to_loopback_and_honors_options(monkeypatch, tmp_path: Path) -> None:
     from wechat_ai import cli as cli_module
 
+    _isolate_settings(monkeypatch, tmp_path)
     calls: list[dict[str, object]] = []
 
     def fake_run(app: object, **kwargs: object) -> None:
         calls.append({"app": app, **kwargs})
 
     fake_app = object()
-    monkeypatch.setattr(cli_module, "create_app", lambda: fake_app)
+    monkeypatch.setattr(cli_module, "create_app", lambda _settings: fake_app)
     monkeypatch.setattr(cli_module, "_existing_runtime_status", lambda _url: "absent")
     monkeypatch.setattr(cli_module.uvicorn, "run", fake_run)
     runner = CliRunner()
@@ -51,11 +69,12 @@ def test_serve_binds_uvicorn_to_loopback_and_honors_options(monkeypatch) -> None
     assert calls[0]["port"] == 9012
 
 
-def test_serve_schedules_browser_for_ready_app_by_default(monkeypatch) -> None:
+def test_serve_schedules_browser_for_ready_app_by_default(monkeypatch, tmp_path: Path) -> None:
     from wechat_ai import cli as cli_module
 
+    _isolate_settings(monkeypatch, tmp_path)
     opened_urls: list[str] = []
-    monkeypatch.setattr(cli_module, "create_app", object)
+    monkeypatch.setattr(cli_module, "create_app", lambda _settings: object())
     monkeypatch.setattr(cli_module, "_existing_runtime_status", lambda _url: "absent")
     monkeypatch.setattr(cli_module.uvicorn, "run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(

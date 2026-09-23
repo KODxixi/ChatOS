@@ -13,6 +13,7 @@
 | 运行配置 | [配置加载器](apps/gateway/src/wechat_ai/config.py)、[配置模板](apps/gateway/config/settings.example.json) |
 | 正式启动 | [统一启动器](scripts/start_chatos.mjs) |
 | 入口验收 | [验收脚本](scripts/verify-entry.mjs) |
+| 全流程验收与提交门槛 | [README 验收与提交](README.md#验收与提交)、[检索迁移验收](rules/local-model.md#迁移验收) |
 | RAG prompt | [提示词](apps/gateway/src/wechat_ai/system/rag-system.md)、[加载与版本日志](apps/gateway/src/wechat_ai/rag_prompt.py) |
 | Gchat 行为与检索职责 | [Gchat 预设](apps/gateway/src/wechat_ai/system/gchat-preset.md) |
 | 文件知识归档与索引 | [归档实现](apps/gateway/src/wechat_ai/services/knowledge_archiver.py)、[索引桥接](apps/gateway/src/wechat_ai/services/local_knowledge_index.py) |

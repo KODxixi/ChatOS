@@ -1007,11 +1007,6 @@ button.conversation-alert-item {
     transition: transform var(--gary-duration-fast) var(--gary-ease-out);
   }
 
-  /* Chrome's closed base-select text does not inherit select text-align. */
-  .chatos-app select::selectedcontent {
-    text-align: center;
-  }
-
   .conversation-option-field select:open::picker-icon,
   .chatos-filter-field select:open::picker-icon,
   .chatos-app select:open::picker-icon {

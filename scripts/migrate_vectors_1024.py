@@ -53,6 +53,7 @@ def file_fingerprint(root):
 def prepare(work, settings_file):
     from wechat_ai.services import embedding_service as es
     import numpy as np
+    import yaml
 
     raw, db = configured_db(settings_file)
     knowledge = db.parent / "knowledge"
@@ -96,6 +97,18 @@ def prepare(work, settings_file):
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if settings_file.read_bytes() != (work / "settings.json").read_bytes():
         raise RuntimeError("Settings changed since snapshot; use a fresh work directory")
+    registry = yaml.safe_load((work / "registry.yaml").read_text(encoding="utf-8"))
+    kb = registry["knowledge_bases"]["chatos"]
+    if Path(kb["root"]).resolve() != (knowledge / "index").resolve():
+        raise RuntimeError("Registry points to a different source corpus")
+    registry["text_backend"]["embedding"].update(model=MODEL, dimensions=DIM)
+    kb.update(embed_model=MODEL, dimensions=DIM)
+    shadow_registry = work / "registry-1024.yaml"
+    if shadow_registry.exists():
+        if yaml.safe_load(shadow_registry.read_text(encoding="utf-8")) != registry:
+            raise RuntimeError("Shadow registry changed since prepare")
+    else:
+        shadow_registry.write_text(yaml.safe_dump(registry, sort_keys=False, allow_unicode=True), encoding="utf-8")
     es.MODEL, es._DIM = MODEL, DIM
     es.BASE = raw.get("llamaSwap", {}).get("retrievalBaseUrl", "http://127.0.0.1:9123/v1")
     assert es._embed_request(["dimension verification"]).shape == (1, DIM)
@@ -148,6 +161,10 @@ def cutover(work, settings_file):
     report = json.loads((work / "file-index-report.json").read_text(encoding="utf-8-sig"))
     if report.get("files_failed") != 0 or report.get("errors"):
         raise RuntimeError("File index has failures or no completion evidence")
+    if not isinstance(report.get("files_discovered"), int) or report["files_discovered"] <= 0 or (
+        report.get("files_indexed", 0) + report.get("files_skipped_unchanged", 0) != report["files_discovered"]
+    ):
+        raise RuntimeError("File index completion count does not cover the source corpus")
     import lancedb
     import yaml
     registry = work / "registry-1024.yaml"
@@ -209,7 +226,10 @@ def cutover(work, settings_file):
             if moved_old:
                 backup.rename(active)
             raise
-    result = {"status": "completed", "stage": "ready", "stats": {"chunks_indexed": lance_count}, "error": None, "updatedAt": int(time.time() * 1000)}
+    result = {"status": "completed", "stage": "ready", "stats": {
+        "files_discovered": report.get("files_discovered", 0),
+        "total_chunks_in_store": lance_count,
+    }, "error": None, "updatedAt": int(time.time() * 1000)}
     (knowledge / "index-status.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"stage": "cutover_complete", "sqlite_rows": count, "lance_rows": lance_count, "dimensions": DIM}), flush=True)
 

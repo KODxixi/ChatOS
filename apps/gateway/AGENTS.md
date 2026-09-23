@@ -31,7 +31,7 @@ wechat_ai/
 │   ├── graph_service.py / search_service.py / knowledge_archiver.py
 │   ├── job_worker.py           # 后台任务队列
 │   └── ...
-└── migrations/          # 编号 SQL，001..016，启动自动执行
+└── migrations/          # 编号 SQL，启动按序自动执行
 ```
 
 **分层纪律**：`api/` 只做参数解析/响应组装/错误；业务写在 `services/`；
@@ -39,7 +39,7 @@ wechat_ai/
 
 ## 数据库迁移流程
 
-- SQL 文件放 `migrations/`，文件名即序号：`NNN_snake_case.sql`（当前到 `016_llm_cache.sql`）。
+- SQL 文件放 `migrations/`，文件名即序号：`NNN_snake_case.sql`；当前最高版本以目录中的编号为准。
 - `database.py` 在启动时：`PRAGMA journal_mode=WAL; foreign_keys=ON; busy_timeout=30000`，
   然后读 `app_meta` 表里的 `schema_version`，把所有序号 > 当前版本的 SQL 依次执行，最后更新版本号。
 - **迁移只增不改**：已提交的 SQL 绝不回改；改 schema 就加新序号文件。

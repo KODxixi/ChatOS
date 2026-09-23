@@ -6,7 +6,7 @@
 
 ## 启动
 
-前置 Node >=22.13、Python >=3.13；后端在 `apps/gateway` 用 `uv sync` 安装。运行配置为 `apps/gateway/config/settings.json`，模板在同目录；数据库保持外部数据根，无需迁移。
+前置 Node >=22.13、Python >=3.13；后端在 `apps/gateway` 用 `uv sync --extra migration` 安装。运行配置为 `apps/gateway/config/settings.json`，模板在同目录。现役消息与文件检索统一使用 [本地检索契约](rules/local-model.md) 所定义的模型和向量维度；旧索引必须从原文重建并验收后切换，不能只改配置。
 
 ```powershell
 cd C:\ChatOS\apps\chatos-console
@@ -34,6 +34,10 @@ node scripts/verify-entry.mjs --live
 
 模型优先本地服务。UI Thinking Mode 仅调用本机 LM Studio，是否可用以实际加载和请求结果为准。
 
-验证：console 内 `npm test`、`npm run typecheck`、`npm run build`；网关 `python -m pytest`。HTTP/契约检查不替代浏览器视觉验收。
+## 验收与提交
+
+在 `apps/gateway` 运行 `.venv\Scripts\python.exe -m pytest -q`；在 `apps/chatos-console` 依次运行 `npm test`、`npm run typecheck`、`npm run build`；在 `apps/agent-runtime` 运行 `npm run build` 和 `npm test`。原生依赖须与所用 Node 版本匹配。提交前运行 `node scripts/verify-entry.mjs` 和 `node scripts/verify-entry.mjs --live`，并实际核对消息及文件索引的模型、维度、覆盖和语义检索结果。HTTP/契约检查不替代浏览器视觉验收。
+
+迁移入口和切换条件见 [本地检索契约](rules/local-model.md#迁移验收)。只在全量检查、生产索引切换及真实检索验收通过后提交并推送；已知失败要修复或按现役产品契约更新检查，不以历史基线失败作为豁免。
 
 详见 [启动、冲突处理与恢复](docs/canonical-entry.md)、[贡献约定](AGENTS.md) 和组件 AGENTS。
