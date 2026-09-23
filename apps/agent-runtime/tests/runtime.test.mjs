@@ -449,7 +449,7 @@ test('generate_embedding sends the configured embedding model', async () => {
     req.on('end', () => {
       requestBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ data: [{ embedding: [0.25, 0.5] }] }));
+      res.end(JSON.stringify({ data: [{ embedding: Array(1024).fill(0.25) }] }));
     });
   });
   const baseUrl = await listen(embeddingServer);
@@ -457,13 +457,14 @@ test('generate_embedding sends the configured embedding model', async () => {
   const registry = new ToolRegistry(loadConfig({
     workspaceDir: tempDir,
     embeddingUrl: `${baseUrl}/v1`,
-    embeddingModel: 'configured-model',
+    embeddingModel: 'text-embedding-qwen3-embedding-0.6b',
   }));
 
   try {
     const result = await registry.execute('generate_embedding', { text: 'hello' });
-    assert.equal(requestBody.model, 'configured-model');
-    assert.match(result, /dim=2/);
+    assert.equal(requestBody.model, 'text-embedding-qwen3-embedding-0.6b');
+    assert.match(result, /dim=1024/);
+    assert.throws(() => loadConfig({ embeddingModel: 'old-model' }), /1024/);
   } finally {
     await close(embeddingServer);
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -499,9 +500,10 @@ test('generate_embedding times out a stalled local endpoint', async () => {
 });
 
 test('generate_embedding rejects a malformed vector response', async () => {
+  let responseVector = [1, 'bad'];
   const embeddingServer = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ data: [{ embedding: [1, 'bad'] }] }));
+    res.end(JSON.stringify({ data: [{ embedding: responseVector }] }));
   });
   const baseUrl = await listen(embeddingServer);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-embedding-shape-'));
@@ -515,6 +517,9 @@ test('generate_embedding rejects a malformed vector response', async () => {
       await registry.execute('generate_embedding', { text: 'hello' }),
       'Error: embedding API returned an invalid vector',
     );
+    responseVector = Array(1024).fill(0);
+    assert.equal(await registry.execute('generate_embedding', { text: 'hello' }),
+      'Error: embedding API returned an invalid vector');
   } finally {
     await close(embeddingServer);
     fs.rmSync(tempDir, { recursive: true, force: true });

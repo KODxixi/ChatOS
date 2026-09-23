@@ -21,12 +21,19 @@ from ..services.conversation_service import ConnectionFactory
 logger = logging.getLogger(__name__)
 
 
+class IndexBody(BaseModel):
+    conversation_id: Optional[str] = None
+    full: bool = False
+
+
+class RagBody(BaseModel):
+    question: str
+    conversationId: str | None = None
+    limit: int = 8
+
+
 def create_vector_router(connection_factory: ConnectionFactory, db_path: str) -> APIRouter:
     router = APIRouter()
-
-    class IndexBody(BaseModel):
-        conversation_id: Optional[str] = None
-        full: bool = False
 
     def _do_index(conversation_id: Optional[str], full: bool) -> dict[str, Any]:
         if not es.is_available():
@@ -86,11 +93,6 @@ def create_vector_router(connection_factory: ConnectionFactory, db_path: str) ->
                 c = re.sub(f"({re.escape(t)})", r"<mark>\1</mark>", c)
             r["content"] = c
         return {"query": q, "results": results, "count": len(results)}
-
-    class RagBody(BaseModel):
-        question: str
-        conversationId: str | None = None
-        limit: int = 8
 
     @router.post("/rag/ask")
     def rag_ask(body: RagBody) -> dict[str, Any]:

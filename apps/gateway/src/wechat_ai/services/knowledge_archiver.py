@@ -50,18 +50,25 @@ def _link_or_copy(source: Path, destination: Path) -> bool:
     return True
 
 
-def _write_registry(knowledge_root: Path) -> None:
+def _write_registry(knowledge_root: Path, *, retrieval_base_url: str = "http://127.0.0.1:9123/v1") -> None:
+    # Existing registries describe the active index; archive is not a migration.
+    target = knowledge_root / "local-model-registry.yaml"
+    if target.exists():
+        return
+    from ..config import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS
+    from .reranker_service import _validated_loopback_url
+    endpoint = json.dumps(_validated_loopback_url(retrieval_base_url).removesuffix("/v1"))
     index_root = str((knowledge_root / "index").resolve())
     registry = (
         "version: 3\n"
         "text_backend:\n"
-        "  base_url: http://127.0.0.1:9123\n"
+        f"  base_url: {endpoint}\n"
         "  embedding:\n"
-        "    base_url: http://127.0.0.1:9123\n"
-        "    model: text-embedding-qwen3-embedding-8b\n"
-        "    dimensions: 4096\n"
+        f"    base_url: {endpoint}\n"
+        f"    model: {json.dumps(DEFAULT_EMBEDDING_MODEL)}\n"
+        f"    dimensions: {DEFAULT_EMBEDDING_DIMENSIONS}\n"
         "  rerank:\n"
-        "    base_url: http://127.0.0.1:9123\n"
+        f"    base_url: {endpoint}\n"
         "    model: vl-reranker-2b\n"
         "vector_store:\n"
         "  type: lancedb\n"
@@ -70,8 +77,8 @@ def _write_registry(knowledge_root: Path) -> None:
         "    type: text\n"
         f"    root: {json.dumps(index_root, ensure_ascii=False)}\n"
         "    patterns: [\"*.md\"]\n"
-        "    dimensions: 4096\n"
-        "    embed_model: text-embedding-qwen3-embedding-8b\n"
+        f"    dimensions: {DEFAULT_EMBEDDING_DIMENSIONS}\n"
+        f"    embed_model: {json.dumps(DEFAULT_EMBEDDING_MODEL)}\n"
         "    max_file_bytes: 5000000\n"
         "    max_files: 100000\n"
         "    embed_batch_size: 64\n"
@@ -85,6 +92,7 @@ def archive_library(
     *,
     library_root: Path,
     asset_root: Path | None,
+    retrieval_base_url: str = "http://127.0.0.1:9123/v1",
 ) -> dict[str, object]:
     """Create a rebuildable archive + Markdown index without mutating source rows."""
     knowledge_root = library_root / "knowledge"
@@ -227,7 +235,7 @@ def archive_library(
         write_documents(catalog_root, catalog_documents, "catalogDocumentsWritten")
         write_documents(index_root, documents, "documentsWritten")
 
-    _write_registry(knowledge_root)
+    _write_registry(knowledge_root, retrieval_base_url=retrieval_base_url)
     (knowledge_root / "README.md").write_text(
         "# ChatOS 本地知识库\n\n"
         "微信数据库与原始媒体是只读真源；本目录全部内容均为可删除重建的投影。\n\n"

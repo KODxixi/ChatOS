@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import closing
 from typing import Any
 
 import numpy as np
@@ -17,9 +18,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 BASE = os.environ.get("LOCAL_EMBEDDING_BASE_URL", "http://localhost:9123/v1")
-MODEL = os.environ.get("LOCAL_EMBEDDING_MODEL", "text-embedding-qwen3-embedding-8b")
+from ..config import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS, validate_embedding_config
+from .reranker_service import _validated_loopback_url
+
+MODEL = os.environ.get("LOCAL_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 BATCH = 1024
-_DIM = 4096
+_DIM = int(os.environ.get("LOCAL_EMBEDDING_DIMENSIONS", DEFAULT_EMBEDDING_DIMENSIONS))
 _CONTEXT_LENGTH = 2048
 _MIN_TEXT_LENGTH = 4
 # 降级链已于 2026-09-21 删除（两个降级源的维度都与索引不符，只会写坏数据）。
@@ -58,12 +62,15 @@ _SYNC_ENABLED = False
 
 def configure_from_settings(settings) -> None:
     """Push indexing config from Settings into module-level runtime globals."""
-    global MODEL, BATCH, _CONTEXT_LENGTH, _MIN_TEXT_LENGTH
+    global BASE, MODEL, _DIM, BATCH, _CONTEXT_LENGTH, _MIN_TEXT_LENGTH
     global GROUP_SIZE_THRESHOLD, NOISE_GROUP_KEYWORDS
     global _SYNC_ENABLED, _SYNC_INTERVAL_MIN
     m = getattr(settings, "indexing_model", None)
     if m:
         MODEL = str(m)
+    _DIM = int(getattr(settings, "indexing_dimensions", 1024))
+    BASE = _validated_loopback_url(os.environ.get("LOCAL_EMBEDDING_BASE_URL") or settings.retrieval_base_url)
+    validate_embedding_config(MODEL, _DIM)
     BATCH = int(getattr(settings, "indexing_batch_size", BATCH))
     _CONTEXT_LENGTH = int(getattr(settings, "indexing_context_length", _CONTEXT_LENGTH))
     _MIN_TEXT_LENGTH = int(getattr(settings, "indexing_min_text_length", _MIN_TEXT_LENGTH))
@@ -144,24 +151,58 @@ class EmbeddingUnavailable(RuntimeError):
 class EmbeddingClient:
     """Minimal OpenAI-compatible embedding client (seam used by app.py)."""
 
-    def __init__(self, base_url: str, *, model: str = MODEL, api_key: str | None = None,
-                 timeout: float = 30.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.model = model
+    def __init__(self, base_url: str, *, model: str | None = None, api_key: str | None = None,
+                 timeout: float = 30.0, dimensions: int | None = None, opener=None) -> None:
+        self.base_url = _validated_loopback_url(base_url)
+        self.model = model or MODEL
+        self.dimensions = dimensions or _DIM
+        validate_embedding_config(self.model, self.dimensions)
+        self.opener = opener or urllib.request.urlopen
         self.api_key = api_key or "not-needed"
         self.timeout = timeout
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
         body = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
         hdrs = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
         req = urllib.request.Request(f"{self.base_url}/embeddings", data=body, headers=hdrs, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            data = json.loads(r.read())
-        return [d["embedding"] for d in data["data"]]
+        try:
+            with closing(self.opener(req, timeout=self.timeout)) as r:
+                data = json.loads(r.read())
+            rows = data["data"]
+            if sorted(d["index"] for d in rows) != list(range(len(texts))):
+                raise ValueError("embedding response indices/count mismatch")
+            arr = np.asarray([d["embedding"] for d in sorted(rows, key=lambda d: d["index"])], dtype=np.float32)
+            if arr.shape != (len(texts), self.dimensions) or not np.isfinite(arr).all():
+                raise ValueError(f"embedding shape/values invalid: {arr.shape}, expected {(len(texts), self.dimensions)}")
+            if np.any(np.linalg.norm(arr, axis=1) == 0):
+                raise ValueError("zero embedding vector")
+            return arr.tolist()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise EmbeddingUnavailable(str(exc)) from exc
+
+    def similarities(self, query: str, documents) -> list[float]:
+        if not documents:
+            return []
+        vectors = np.asarray(self.embed([query, *documents]), dtype=np.float32)
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        return (vectors[1:] @ vectors[0]).tolist()
 
 
 def is_available() -> bool:
-    return bool(KEY)
+    """Whether a local endpoint is configured; not a health probe."""
+    return bool(BASE and MODEL)
+
+
+def _check_index_space(connection: sqlite3.Connection) -> None:
+    mismatch = connection.execute(
+        "SELECT 1 FROM message_embeddings WHERE status='indexed' "
+        "AND (model_version IS NULL OR model_version != ? OR embedding IS NULL OR length(embedding) != ?) LIMIT 1",
+        (MODEL, _DIM * 4),
+    ).fetchone()
+    if mismatch:
+        raise EmbeddingUnavailable("Existing index uses a different embedding space; rebuild a shadow database from source before switching configuration")
 
 
 def _embed_request(texts: list[str]) -> np.ndarray:
@@ -177,12 +218,13 @@ def _embed_request(texts: list[str]) -> np.ndarray:
     唯一真相见 C:\AI\memory\_canonical\LOCAL-MODELS.md 第六节。
     """
     global _use_local
+    validate_embedding_config(MODEL, _DIM)
     tries = [
         (BASE, MODEL, "llama-swap"),
     ]
     last = None
     for base, model, tag in tries:
-        url = f"{base}/embeddings"
+        url = f"{_validated_loopback_url(base)}/embeddings"
         hdrs = {"Content-Type": "application/json"}
         body = json.dumps({"model": model, "input": texts}).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
@@ -194,12 +236,15 @@ def _embed_request(texts: list[str]) -> np.ndarray:
                     data = json.loads(r.read())
                 if tag != "llama-swap":
                     logger.warning("embedding via %s (llama-swap unavailable)", tag)
-                arr = np.array([d["embedding"] for d in data["data"]], dtype=np.float32)
+                rows = data["data"]
+                if sorted(d["index"] for d in rows) != list(range(len(texts))):
+                    raise EmbeddingUnavailable("embedding response indices/count mismatch")
+                arr = np.array([d["embedding"] for d in sorted(rows, key=lambda d: d["index"])], dtype=np.float32)
                 # 维度必须与索引一致，否则写进去就是**静默的向量空间不一致**（检索乱掉而不报错）。
                 # 注意 RuntimeError 不在下面的 except 元组里，所以它会直接抛出、不会被重试吞掉。
-                if arr.ndim != 2 or arr.shape[1] != _DIM:
+                if arr.shape != (len(texts), _DIM) or not np.isfinite(arr).all() or np.any(np.linalg.norm(arr, axis=1) == 0):
                     raise RuntimeError(
-                        f"embedding 维度不匹配：{tag} ({base}/{model}) 返回 {arr.shape[1]} 维，"
+                        f"embedding 无效：{tag} ({base}/{model}) 返回 shape={arr.shape}，"
                         f"而索引是 {_DIM} 维 —— 已拒绝写入。检查 LOCAL_EMBEDDING_BASE_URL 指向的服务。"
                     )
                 return arr
@@ -217,6 +262,8 @@ def _embed_request(texts: list[str]) -> np.ndarray:
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
     out = []
     for i in range(0, len(texts), BATCH):
         out.append(_embed_request(texts[i : i + BATCH]))
@@ -247,6 +294,7 @@ _STORE_ENABLED_VECTOR = """
 
 
 def embed_and_store(connection: sqlite3.Connection, message_id: int, conversation_id: str, text: str) -> bool:
+    _check_index_space(connection)
     if not _can_index_conversation(connection, conversation_id):
         return False
     body = clean_text(text)
@@ -283,7 +331,14 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
     ).fetchone()[0]
     with _job_lock:
         job = dict(_JOB)
+    spaces = connection.execute(
+        "SELECT model_version, length(embedding)/4, COUNT(*) FROM message_embeddings "
+        "WHERE status='indexed' GROUP BY model_version, length(embedding)"
+    ).fetchall()
     return {
+        "configuredModel": MODEL,
+        "configuredDimensions": _DIM,
+        "indexSpaces": [{"model": r[0], "dimensions": r[1], "count": r[2]} for r in spaces],
         "totalMessages": total,
         "indexed": indexed,
         "failed": failed,
@@ -324,6 +379,7 @@ def index_conversation(db_path: str, conversation_id: str) -> dict:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=60000")
             conn.execute("PRAGMA synchronous=NORMAL")
+            _check_index_space(conn)
             if not _can_index_conversation(conn, conversation_id):
                 return {"conversationId": conversation_id, "messages": 0}
             # Only index messages not yet embedded
@@ -436,8 +492,7 @@ def index_all_conversations(db_path: str) -> None:
 def search(connection: sqlite3.Connection, query: str, *, conversation_id: str | None = None,
            limit: int = 10, threshold: float = 0.3) -> list[dict[str, Any]]:
     """Semantic search. Returns ranked message rows with similarity."""
-    if not KEY:
-        return []
+    _check_index_space(connection)
     qv = _embed_request([clean_text(query)])[0]
     qv = qv / max(np.linalg.norm(qv), 1e-9)
     rows = connection.execute(
@@ -541,9 +596,12 @@ def start_periodic_sync(settings) -> None:
                 logger.info("periodic sync: starting index run")
                 index_all_conversations(db_path)
                 # wait for the background thread to finish
-                with _job_lock:
-                    while _JOB.get("running"):
-                        _t.sleep(5)
+                while True:
+                    with _job_lock:
+                        running = _JOB.get("running")
+                    if not running:
+                        break
+                    _t.sleep(5)
                 v = verify_index_coverage(db_path)
                 logger.info("periodic sync done: %s", v)
             except Exception as e:

@@ -24,12 +24,14 @@ class LocalKnowledgeIndex:
         cli_path: Path,
         python_command: Sequence[str],
         runner: Runner = subprocess.run,
+        retrieval_base_url: str = "http://127.0.0.1:9123/v1",
     ) -> None:
         self.library_root = library_root.resolve()
         self.knowledge_root = self.library_root / "knowledge"
         self.cli_path = cli_path.resolve()
         self.python_command = tuple(python_command)
         self.runner = runner
+        self.retrieval_base_url = retrieval_base_url
         self._lock = threading.Lock()
         self._state = self._load_state()
         if self._state.get("status") == "running":
@@ -37,7 +39,7 @@ class LocalKnowledgeIndex:
             self._persist()
 
     @classmethod
-    def default(cls, library_root: Path) -> "LocalKnowledgeIndex":
+    def default(cls, library_root: Path, *, retrieval_base_url: str = "http://127.0.0.1:9123/v1") -> "LocalKnowledgeIndex":
         cli_path = Path(os.environ.get("CHATOS_LOCAL_MODEL_CLI", r"C:\AI\skills\local-model\scripts\cli.py"))
         configured_python = os.environ.get("CHATOS_LOCAL_MODEL_PYTHON")
         if configured_python:
@@ -48,7 +50,7 @@ class LocalKnowledgeIndex:
             python_command = (str(shutil.which("py")), "-3.13")
         else:
             python_command = (str(shutil.which("python") or "python"),)
-        return cls(library_root=library_root, cli_path=cli_path, python_command=python_command)
+        return cls(library_root=library_root, cli_path=cli_path, python_command=python_command, retrieval_base_url=retrieval_base_url)
 
     def start(self) -> bool:
         with self._lock:
@@ -70,6 +72,7 @@ class LocalKnowledgeIndex:
                 connection_factory,
                 library_root=self.library_root,
                 asset_root=asset_root,
+                retrieval_base_url=self.retrieval_base_url,
             )
             self._update(stage="vectorize", stats=archive_stats)
             if not self.cli_path.is_file():
@@ -95,6 +98,8 @@ class LocalKnowledgeIndex:
             if completed.returncode != 0:
                 raise RuntimeError((completed.stderr or completed.stdout or "local-model index failed").strip()[:1000])
             raw_index_stats = json.loads(completed.stdout or "{}")
+            if raw_index_stats.get("files_failed", 0):
+                raise RuntimeError(f"local-model index incomplete: {raw_index_stats['files_failed']} files failed")
             index_stats = {
                 key: value
                 for key, value in raw_index_stats.items()

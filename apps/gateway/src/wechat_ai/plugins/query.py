@@ -21,6 +21,8 @@ def apply(ctx) -> None:
 
     connection_factory = ctx.get("db.connection_factory")
     settings = ctx.get("settings")
+    from ..services.embedding_service import configure_from_settings
+    configure_from_settings(settings)
     ctx.add_router(
         "/api",
         create_conversations_router(
@@ -35,6 +37,7 @@ def apply(ctx) -> None:
         create_knowledge_router(
             connection_factory,
             asset_root=settings.asset_dir,
+            retrieval_base_url=settings.retrieval_base_url,
         ),
     )
     ctx.add_router(

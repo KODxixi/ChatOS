@@ -12,7 +12,11 @@ def load_system_prompt(name: str) -> str:
     """Load a system prompt from system/<name>.md. Cached at module load."""
     from pathlib import Path
     p = Path(__file__).parent / "system" / f"{name}.md"
-    return p.read_text(encoding="utf-8").strip()
+    import hashlib
+    import logging
+    text = p.read_text(encoding="utf-8").strip()
+    logging.getLogger(__name__).info("prompt=%s md5=%s chars=%d", name, hashlib.md5(text.encode("utf-8")).hexdigest()[:8], len(text))
+    return text
 
 
 LOCAL_WECHAT_RAG_SYSTEM_PROMPT = load_system_prompt("rag-system")

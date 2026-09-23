@@ -1,5 +1,7 @@
 # AGENTS.md — gateway（后端）
 
+向量模型、配置、旧库兼容与迁移：唯一权威为 [本地检索契约](../../rules/local-model.md)。下文历史吞吐只对应旧模型。
+
 ChatOS 的 FastAPI 网关。入口 `wechat_ai/cli.py`（`chatbox serve`），应用组装在 `wechat_ai/app.py`。
 运行时是 Cordis 风格的 plugin kernel：每个能力是 `plugins/composition.py` 里的一行 plugin 声明。
 
@@ -66,7 +68,7 @@ wechat_ai/
 | 用途 | 模型名 | 端点 |
 |---|---|---|
 | Chat / 摘要 / RAG | `muse-glimmer-30b` | llama-swap `http://127.0.0.1:9123/v1` |
-| **Embedding（主）** | `text-embedding-qwen3-embedding-8b`（4096维） | **llama-swap `http://localhost:9123/v1`** |
+| **Embedding** | 由 `indexing.model` / `indexing.dimensions` 指定，默认值与迁移见本地检索契约 | llama-swap 9123 |
 | Reranker | `vl-reranker-2b` | llama-swap `http://localhost:9123/v1` |
 
 **embedding/reranker 走 llama-swap 9123（CUDA 全层 GPU，2026-09-21 由 Vulkan 切换）；chat/VLM 与检索栈统一走 llama-swap 9123（muse-glimmer-30b 与检索模型同处一个调度器）。**
@@ -78,7 +80,7 @@ wechat_ai/
 | `LOCAL_LLM_BASE_URL` | `http://127.0.0.1:9123/v1` | llama-swap chat 端点 |
 | `LOCAL_LLM_MODEL` | `muse-glimmer-30b` | Muse Glimmer 模型（`--alias`） |
 | `LOCAL_EMBEDDING_BASE_URL` | `http://localhost:9123/v1` | **llama-swap embedding 端点** |
-| `LOCAL_EMBEDDING_MODEL` | `text-embedding-qwen3-embedding-8b` | **llama-swap embedding 模型（4096维）** |
+| `LOCAL_EMBEDDING_MODEL` / `LOCAL_EMBEDDING_DIMENSIONS` | 见本地检索契约 | 模型与维度必须匹配 |
 
 `config/settings.json` 中的 `lmStudio.baseUrl` 与环境变量等价，环境变量优先。
 超时：本地 10s，外部 20s；远程调用用标准库 `urllib`，无第三方 SDK 依赖。
@@ -88,9 +90,9 @@ wechat_ai/
 ### 向量索引
 
 - `message_embeddings` 表（migration `017`）存储消息向量，BLOB float32
-- **主模型**：`text-embedding-qwen3-embedding-8b`（4096维），llama-swap 9123
+- **模型与维度**：以本地检索契约和运行配置为准。
 - embedding 服务独立于 llm_service，但复用相同的本地优先+降级策略
-- **embedding 模型切换时必须清除旧向量重新索引**（维度不同不能混用，768↔4096）
+- **模型切换**：从原文 shadow 重建，验收后切换；保留旧库回滚，不直接清除生产向量。
 - 批量 128 条/请求（`indexing.batchSize` → `index_conversation`），实测吞吐天花板 ~17 条/秒（~1000 条/分钟）。批量 >256 会断崖、并发无收益、WAL 早已开启，详见仓库根 `rules/vector-index.md`「性能真相」，勿从 SQLite/批量提交理论优化
 
 #### 索引过滤规则（硬约束）

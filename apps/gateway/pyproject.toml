@@ -25,6 +25,9 @@ dependencies = [
     "uvicorn>=0.41,<1",
 ]
 
+[project.optional-dependencies]
+migration = ["lancedb>=0.30", "PyYAML>=6"]
+
 [project.scripts]
 chatbox = "wechat_ai.cli:cli"
 gchat = "wechat_ai.cli:cli"

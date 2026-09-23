@@ -30,7 +30,7 @@ def apply(ctx) -> None:
     answer_service = AnswerService(
         create_evidence_retriever(
             ctx.get("db.connection_factory"),
-            embedding=embedding_factory(settings.retrieval_base_url),
+            embedding=embedding_factory(settings.retrieval_base_url, model=settings.indexing_model, dimensions=settings.indexing_dimensions),
             reranker=(
                 reranker_factory(settings.retrieval_base_url)
                 if settings.rerank_enabled

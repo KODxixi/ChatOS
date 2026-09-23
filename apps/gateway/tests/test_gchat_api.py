@@ -65,8 +65,8 @@ def test_gchat_preset_is_generic_and_deterministic(tmp_path: Path) -> None:
     assert "## Messenger red lines" in payload["content"]
     assert "## Continuity" in payload["content"]
     assert "## Local WeChat RAG answer mode" in payload["content"]
-    assert "text-embedding-qwen3-embedding-8b" in payload["content"]
-    assert "text-reranker-8b" in payload["content"]
+    assert "embedding 模型" in payload["content"]
+    assert "reranker 模型" in payload["content"]
     assert "以时间最晚的对话为准" in payload["content"]
     assert "根据本地微信记录，未查找到相关讨论。" in payload["content"]
 

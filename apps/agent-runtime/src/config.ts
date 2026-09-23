@@ -43,7 +43,7 @@ export const defaultConfig: AgentRuntimeConfig = {
   model: 'muse-glimmer-30b',
   apiKey: 'not-needed',
   embeddingUrl: 'http://localhost:9123/v1',
-  embeddingModel: 'text-embedding-qwen3-embedding-8b',
+  embeddingModel: 'text-embedding-qwen3-embedding-0.6b',
   workspaceDir: path.join(os.homedir(), 'ChatOS', 'workspace'),
   wsPort: 8913,
   dbPath: path.join(os.homedir(), 'ChatOS', 'data', 'agent-runtime.sqlite'),
@@ -76,6 +76,9 @@ function integerInRange(name: string, value: number, min: number, max: number): 
 
 export function loadConfig(overrides?: Partial<AgentRuntimeConfig>): AgentRuntimeConfig {
   const config = { ...defaultConfig, ...overrides };
+  if (config.embeddingModel !== defaultConfig.embeddingModel) {
+    throw new Error('ChatOS embedding requires text-embedding-qwen3-embedding-0.6b / 1024');
+  }
   config.lmStudioUrl = localHttpUrl('lmStudioUrl', config.lmStudioUrl);
   config.embeddingUrl = localHttpUrl('embeddingUrl', config.embeddingUrl);
   config.wsPort = integerInRange('wsPort', config.wsPort, 0, 65_535);

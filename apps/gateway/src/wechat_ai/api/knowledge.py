@@ -25,11 +25,12 @@ def create_knowledge_router(
     *,
     asset_root: Path | None = None,
     local_index: LocalKnowledgeIndex | None = None,
+    retrieval_base_url: str = "http://127.0.0.1:9123/v1",
 ) -> APIRouter:
     router = APIRouter()
     library_root = asset_root.parent if asset_root is not None else None
     index = local_index or (
-        LocalKnowledgeIndex.default(library_root)
+        LocalKnowledgeIndex.default(library_root, retrieval_base_url=retrieval_base_url)
         if library_root is not None
         else None
     )
@@ -111,6 +112,7 @@ def create_knowledge_router(
             connection_factory,
             library_root=library_root,
             asset_root=asset_root,
+            retrieval_base_url=retrieval_base_url,
         )
         return {"ok": True, "stats": stats}
 

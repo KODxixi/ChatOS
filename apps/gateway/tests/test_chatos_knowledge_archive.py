@@ -120,7 +120,7 @@ def test_archive_builds_rebuildable_manifest_objects_and_local_model_registry(
     assert archived_image.read_bytes() == b"image-bytes"
     registry = (knowledge_root / "local-model-registry.yaml").read_text(encoding="utf-8")
     assert "chatos:" in registry
-    assert "text-embedding-qwen3-embedding-8b" in registry
+    assert "text-embedding-qwen3-embedding-0.6b" in registry
     assert json.dumps(str((knowledge_root / "index").resolve())) in registry
     assert stats["assetsArchived"] == 2
     assert stats["documentsWritten"] == 1
@@ -164,3 +164,11 @@ def test_local_model_index_runs_only_after_archive_and_persists_honest_status(
     assert "--db" in calls[0]
     persisted = json.loads((tmp_path / "knowledge" / "index-status.json").read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
+
+    index.runner = lambda command, **kwargs: subprocess.CompletedProcess(
+        command, 0, stdout=json.dumps({"files_failed": 1}), stderr=""
+    )
+    assert index.start() is True
+    index.refresh(_connect(database_path), asset_root=asset_root)
+    assert index.status()["status"] == "failed"
+    assert "incomplete" in index.status()["error"]

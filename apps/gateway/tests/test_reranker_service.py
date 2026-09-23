@@ -26,7 +26,7 @@ def test_reranker_posts_single_rerank_call_and_maps_scores_by_index() -> None:
     requests: list[Request] = []
     response = FakeResponse(
         {
-            "model": "text-reranker-8b",
+            "model": "vl-reranker-2b",
             "results": [
                 {"index": 2, "relevance_score": 0.9},
                 {"index": 0, "relevance_score": 0.3},
@@ -55,7 +55,7 @@ def test_reranker_posts_single_rerank_call_and_maps_scores_by_index() -> None:
     assert request.full_url == "http://127.0.0.1:9123/v1/rerank"
     body = json.loads(request.data or b"{}")
     assert body == {
-        "model": "text-reranker-8b",
+        "model": "vl-reranker-2b",
         "query": "蔡敏昨天找我干嘛",
         "documents": ["d0", "d1", "d2"],
     }
@@ -76,7 +76,7 @@ def test_reranker_defaults_to_the_llama_swap_rerank_model() -> None:
     ).score_many("query", ["document"])
 
     body = json.loads(requests[0].data or b"{}")
-    assert body["model"] == "text-reranker-8b"
+    assert body["model"] == "vl-reranker-2b"
 
 
 def test_reranker_fills_missing_documents_with_none_keeping_order() -> None:

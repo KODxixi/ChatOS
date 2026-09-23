@@ -9,6 +9,14 @@ from typing import Any
 
 from .paths import get_project_root, resolve_project_path
 
+DEFAULT_EMBEDDING_MODEL = "text-embedding-qwen3-embedding-0.6b"
+DEFAULT_EMBEDDING_DIMENSIONS = 1024
+
+
+def validate_embedding_config(model: str, dimensions: int) -> None:
+    if (model, dimensions) != (DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS):
+        raise ValueError("ChatOS requires text-embedding-qwen3-embedding-0.6b / 1024; old embedding settings are not supported")
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -27,7 +35,8 @@ class Settings:
     config_path: Path | None = None
     config_identity: str | None = None
     # indexing (message embedding pipeline)
-    indexing_model: str = "text-embedding-qwen3-embedding-8b"
+    indexing_model: str = DEFAULT_EMBEDDING_MODEL
+    indexing_dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS
     indexing_batch_size: int = 1024
     indexing_context_length: int = 2048
     indexing_min_text_length: int = 4
@@ -38,6 +47,9 @@ class Settings:
     indexing_noise_group_keywords: list[str] | None = None
     indexing_sync_enabled: bool = False
     indexing_sync_interval_minutes: int = 15
+
+    def __post_init__(self) -> None:
+        validate_embedding_config(self.indexing_model, self.indexing_dimensions)
 
     @property
     def asset_dir(self) -> Path:
@@ -107,7 +119,8 @@ def load_settings(
         activity_filter_inactive_days=int(
             raw.get("activityFilterInactiveDays", 30)
         ),
-        indexing_model=str(indexing.get("model", "text-embedding-qwen3-embedding-8b")),
+        indexing_model=str(os.environ.get("LOCAL_EMBEDDING_MODEL") or indexing.get("model", DEFAULT_EMBEDDING_MODEL)),
+        indexing_dimensions=int(os.environ.get("LOCAL_EMBEDDING_DIMENSIONS") or indexing.get("dimensions", DEFAULT_EMBEDDING_DIMENSIONS)),
         indexing_batch_size=int(indexing.get("batchSize", 1024)),
         indexing_context_length=int(indexing.get("contextLength", 2048)),
         indexing_min_text_length=int(indexing.get("minTextLength", 4)),

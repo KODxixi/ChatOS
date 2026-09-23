@@ -164,8 +164,9 @@ export class ToolRegistry extends EventEmitter {
         if (!resp.ok) throw new Error(`embedding API ${resp.status}`);
         const data = await resp.json() as { data?: Array<{ embedding?: unknown }> };
         const vec = data.data?.[0]?.embedding;
-        if (!Array.isArray(vec) || vec.length === 0
-          || !vec.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+        if (!Array.isArray(vec) || vec.length !== 1024
+          || !vec.every((value) => typeof value === 'number' && Number.isFinite(value))
+          || !vec.some((value) => value !== 0)) {
           throw new Error('embedding API returned an invalid vector');
         }
         return `Embedding generated: dim=${vec.length}, first5=[${vec.slice(0, 5).join(', ')}]`;

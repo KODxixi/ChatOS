@@ -20,15 +20,17 @@ Agent Runtime Server (Node.js + TypeScript)
 
 - **禁止外部模型 API**，所有推理本地
 - **llama-swap 9123** `http://127.0.0.1:9123/v1`，模型 `muse-glimmer-30b`
-- **llama-swap** `http://localhost:9123/v1`，embedding `text-embedding-qwen3-embedding-8b`
+- **llama-swap** `http://localhost:9123/v1`，embedding `text-embedding-qwen3-embedding-0.6b`，唯一输出维度 1024。
 - 沙箱：工具只能访问 `workspaceDir` 内的文件
 - LM Studio `defaultContextLength` 需 ≥ 16384（系统提示+工具定义约 12K tokens）
 
 ## 快速开始
 
+验证环境为 Node.js 22。切换 Node 主版本后重新运行 `npm ci`，避免 `better-sqlite3` 原生模块 ABI 不匹配。
+
 ```bash
 cd C:\ChatOS\apps\agent-runtime
-npm install
+npm ci
 npm run dev          # 开发模式 (tsx)
 # 或
 npm run build && npm start

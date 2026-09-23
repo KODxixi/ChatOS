@@ -235,7 +235,9 @@ def test_create_app_injects_reranker_into_ask_pipeline(
             embedding_calls.append((query, list(documents)))
             return [1.0]
 
-    def create_embedding(base_url: str) -> Embedding:
+    def create_embedding(base_url: str, *, model: str, dimensions: int) -> Embedding:
+        assert model == "text-embedding-qwen3-embedding-0.6b"
+        assert dimensions == 1024
         embedding_urls.append(base_url)
         return Embedding()
 

@@ -125,16 +125,17 @@ def vectors(library, monkeypatch):
 
     def embed(texts):
         calls.append(texts)
-        return np.array([[1.0, 0.0] for _ in texts], dtype=np.float32)
+        return np.array([[1.0] + [0.0] * 1023 for _ in texts], dtype=np.float32)
 
-    monkeypatch.setattr(embedding, "KEY", "synthetic-test")
+    monkeypatch.setattr(embedding, "MODEL", "text-embedding-qwen3-embedding-0.6b")
+    monkeypatch.setattr(embedding, "_DIM", 1024)
     monkeypatch.setattr(embedding, "_embed_request", embed)
     with closing(sqlite3.connect(library)) as connection:
         connection.execute("INSERT INTO conversation_overrides(conversation_id,is_indexing_enabled,updated_at) VALUES ('alpha',0,'test')")
         for mid, cid in connection.execute("SELECT id,conversation_id FROM messages"):
             connection.execute(
-                "INSERT INTO message_embeddings(message_id,conversation_id,embedding,model_version,status,created_at,updated_at) VALUES (?,?,?,'test','indexed',0,0)",
-                (str(mid), cid, np.array([1.0, 0.0], dtype=np.float32).tobytes()),
+                "INSERT INTO message_embeddings(message_id,conversation_id,embedding,model_version,status,created_at,updated_at) VALUES (?,?,?,'text-embedding-qwen3-embedding-0.6b','indexed',0,0)",
+                (str(mid), cid, np.array([1.0] + [0.0] * 1023, dtype=np.float32).tobytes()),
             )
         connection.commit()
     return library, calls
@@ -180,7 +181,7 @@ def test_disabling_during_embedding_does_not_store_new_vectors(library, monkeypa
         with closing(sqlite3.connect(library)) as other:
             other.execute("INSERT INTO conversation_overrides(conversation_id,is_indexing_enabled,updated_at) VALUES ('alpha',0,'test')")
             other.commit()
-        return np.array([[1.0, 0.0] for _ in texts], dtype=np.float32)
+        return np.array([[1.0] + [0.0] * 1023 for _ in texts], dtype=np.float32)
 
     monkeypatch.setattr(embedding, "_embed_request", disable_and_embed)
     if entry == "batch":
