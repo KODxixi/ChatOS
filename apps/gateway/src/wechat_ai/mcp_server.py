@@ -50,12 +50,17 @@ def _conn_factory() -> Callable[[], sqlite3.Connection]:
 
 
 def _tool_search(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
-    """Search WeChat messages by keywords (FTS + Chinese LIKE)."""
+    """Search WeChat messages by dual-channel (keyword BM25 + vector) with
+    optional cross-encoder rerank.  Degrades gracefully if retrieval models
+    are unavailable."""
     from .services.search_service import search_messages
 
     query = str(args["query"]).strip()
     if not query:
         raise ValueError("query 不能为空")
+
+    embed_fn, reranker, rerank_enabled = _build_retrieval_deps()
+
     result = search_messages(
         conn,
         query=query,
@@ -65,14 +70,54 @@ def _tool_search(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, An
         sent_at_to=None,
         limit=int(args.get("limit", 20)),
         cursor=None,
+        embed_fn=embed_fn,
+        reranker=reranker,
+        rerank_enabled=rerank_enabled,
     )
     items = result.get("items", [])
+    mode = result.get("mode", "legacy")
+    note = result.get("note") or ("消息按时间倒序；content 为消息原文" if mode == "legacy" else "")
     return {
         "count": len(items),
         "query": query,
         "items": items,
-        "note": "消息按时间倒序；content 为消息原文",
+        "mode": mode,
+        "note": note,
     }
+
+
+_RETRIEVAL_DEPS_CACHE: dict[str, Any] = {}
+
+
+def _build_retrieval_deps() -> tuple[Any, Any, bool]:
+    """Construct embed_fn / reranker from settings, cached across calls.
+
+    Returns (embed_fn, reranker, rerank_enabled).  Any construction failure
+    degrades to (None, None, False) -> legacy time-ordered path.
+    """
+    if "resolved" in _RETRIEVAL_DEPS_CACHE:
+        return _RETRIEVAL_DEPS_CACHE["resolved"]  # type: ignore[return-value]
+    try:
+        from .services.embedding_service import (
+            EmbeddingClient,
+            configure_from_settings,
+        )
+        from .services.reranker_service import RerankerClient
+
+        settings = load_settings()
+        configure_from_settings(settings)
+        embed_client = EmbeddingClient(settings.retrieval_base_url)
+        embed_fn = lambda text: embed_client.embed([text])[0]  # noqa: E731
+        reranker = (
+            RerankerClient(settings.retrieval_base_url)
+            if settings.rerank_enabled
+            else None
+        )
+        resolved = (embed_fn, reranker, bool(settings.rerank_enabled))
+    except Exception:
+        resolved = (None, None, False)
+    _RETRIEVAL_DEPS_CACHE["resolved"] = resolved
+    return resolved
 
 
 def _tool_conversations(

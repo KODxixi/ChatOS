@@ -9,7 +9,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..services.conversation_service import ConnectionFactory, InvalidCursor
-from ..services.search_service import InvalidSearchQuery, search_messages
+from ..services.search_service import (
+    EmbedFn,
+    InvalidSearchQuery,
+    search_messages,
+)
 from .conversations import MessageResponse, api_error_response
 
 
@@ -20,9 +24,17 @@ class SearchItem(MessageResponse):
 class SearchPage(BaseModel):
     items: list[SearchItem]
     nextCursor: str | None
+    mode: str | None = None
+    note: str | None = None
 
 
-def create_search_router(connection_factory: ConnectionFactory) -> APIRouter:
+def create_search_router(
+    connection_factory: ConnectionFactory,
+    *,
+    embed_fn: EmbedFn | None = None,
+    reranker: Any | None = None,
+    rerank_enabled: bool = False,
+) -> APIRouter:
     router = APIRouter()
 
     @router.get(
@@ -62,6 +74,9 @@ def create_search_router(connection_factory: ConnectionFactory) -> APIRouter:
                     sent_at_to=sentAtTo,
                     limit=limit,
                     cursor=cursor,
+                    embed_fn=embed_fn,
+                    reranker=reranker,
+                    rerank_enabled=rerank_enabled,
                 )
         except InvalidCursor:
             return api_error_response(

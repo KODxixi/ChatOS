@@ -27,7 +27,7 @@ def test_migration_009_adds_operations_tables_and_agent_grounding_columns(
         } <= tables
         assert connection.execute(
             "SELECT value FROM app_meta WHERE key = 'schema_version'"
-            ).fetchone()[0] == "25"
+            ).fetchone()[0] == "26"
 
         agent_turn_columns = {
             str(row[1]): str(row[4])
