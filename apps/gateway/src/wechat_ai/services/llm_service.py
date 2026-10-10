@@ -96,6 +96,19 @@ def _try_call(base: str, model: str, key: str | None, payload: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _failure_hint(exc: BaseException | None) -> str:
+    """把常见端点故障翻译成可操作的排查提示，避免 401 这类难排查的错误。"""
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 401:
+            return "（HTTP 401：本地端点要求 API key，检查 llama-swap 9123 是否配置了 key）"
+        if exc.code == 404:
+            return "（HTTP 404：模型名不存在，检查 settings 的 model 字段）"
+        return f"（HTTP {exc.code}：检查本地端点 {LOCAL_BASE}）"
+    if isinstance(exc, (urllib.error.URLError, ConnectionError, TimeoutError, OSError)):
+        return "（端点不可达：检查 llama-swap 9123 是否启动）"
+    return ""
+
+
 def complete(
     system_prompt: str,
     user_message: str,
@@ -136,7 +149,7 @@ def complete(
             if tag == "local":
                 _use_local_llm = False
                 logger.warning("local LLM unreachable: %s", exc)
-    logger.warning("LLM call failed (local_only=%s): %s", local_only, last)
+    logger.warning("LLM call failed: %s%s", last, _failure_hint(last))
     raise OpenAICompatibleUnavailable("LLM call failed") from last
 
 

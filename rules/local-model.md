@@ -70,6 +70,21 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 | 媒体打不开 | `apps/gateway/config.json` 的 `db_dir` 没配，媒体根解析不到；`/api/assets/{id}` 依赖它 |
 | 迁移没跑 | `app_meta.schema_version` 对不上 migrations 最大序号；删库前先备份（`data/backups/`） |
 | 索引覆盖 gap | 跑 `verify_index_coverage()` 对比 eligible vs indexed；gap>0 说明有消息未索引或失败 |
+| `-wal` 文件残留 | 进程异常退出（强杀/断电）后 WAL 未合并，见下方「异常退出后 WAL 恢复」 |
+
+### 异常退出后 WAL 恢复
+
+正常退出时 SQLite 会自动 checkpoint（把 `-wal` 合并回主库）；**强杀/断电后 `-wal` 会残留**，主库停在崩溃前的状态，`-wal` 里是尚未落库的最近写入。
+
+- 判断：服务已停且无进程连接（`Get-NetTCPConnection -LocalPort 8912` 无监听、无 `wechat_ai` 进程）后，`wechat-ai.sqlite-wal` 仍存在且非空 → 残留。
+- 恢复（先确认无进程连接，幂等、安全）：服务停止状态下执行
+
+```powershell
+& 'C:\ChatOS\apps\gateway\.venv\Scripts\python.exe' -c "import sqlite3; c=sqlite3.connect(r'D:\ChatOS-Vault\library\wechat-ai.sqlite'); print(c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()); c.close()"
+```
+
+- 结果应为 `(0, N, N)`（busy=0）即合并成功；`(1, ...)` 表示有连接占用，先停服务再重试。合并后 `-wal` 与 `-shm` 被清空/回收，主库时间戳更新。
+- 有进程在跑时**不要** checkpoint：WAL 模式允许并发读写，强行合并会拿锁失败（无数据损坏，只是白跑一次）。
 
 ## 入口与验证
 

@@ -258,7 +258,11 @@ def _embed_request(texts: list[str]) -> np.ndarray:
         # 2026-09-21：降级链已删，所以这里**没有** fallback 可走，只能向上抛。
         if tag == "llama-swap":
             logger.warning("llama-swap unreachable after 5 retries (no fallback configured)")
-    raise RuntimeError(f"embedding failed: {last}")
+    if isinstance(last, urllib.error.HTTPError) and last.code == 401:
+        raise RuntimeError(
+            "embedding failed: HTTP 401 Unauthorized（检查 llama-swap 9123 是否配置并要求 API key）"
+        ) from last
+    raise RuntimeError(f"embedding failed: {last}") from last
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:

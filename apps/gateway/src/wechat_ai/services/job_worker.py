@@ -200,4 +200,31 @@ class SyncImportScheduler:
             try:
                 self.run_once()
             except Exception:
-                _LOGGER.exception("scheduled import enqueue failed")
+                self._enqueue_with_retry()
+
+    def _enqueue_with_retry(self) -> None:
+        """定时入队在瞬时写锁（database is locked）下会失败；短退避重试，避免错过整个周期。
+
+        BEGIN IMMEDIATE 已有 busy_timeout（operations_service 连接 20s），但全量
+        embed（parallelSlots=16）长事务可能仍让入队超时；这里再补 4 次退避重试，
+        全部失败才按异常记录，下一周期照常继续。
+        """
+        delays = (5, 10, 20, 30)
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                self.run_once()
+                return
+            except Exception as exc:
+                if self._stopping.is_set():
+                    return
+                _LOGGER.warning(
+                    "scheduled import enqueue failed (%s), retry %d/%d in %ds",
+                    exc,
+                    attempt,
+                    len(delays),
+                    delay,
+                )
+                self._stopping.wait(delay)
+                if self._stopping.is_set():
+                    return
+        _LOGGER.exception("scheduled import enqueue failed after %d retries", len(delays))
