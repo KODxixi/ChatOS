@@ -8,6 +8,14 @@
 ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**：一个常驻网关
 `http://127.0.0.1:8912` + 一份只读微信库 + 文件知识投影。UI（3108）是可选演示层，不是核心。
 
+## 合规边界（硬约束，不可绕过）
+
+- **微信数据只读**：微信原始表（`messages`/`conversations` 等）在任何路径下都**只读、绝不解密、绝不写入**。只读访问一律用 SQLite URI `mode=ro`；MCP server、监控探针、验收脚本同理。
+- **派生表与原始表严格分离**：`message_embeddings`/`tasks`/`llm_cache`/`retrieval_chunks` 等派生表可写，但与微信原始表分开放、互不污染；迁移 SQL 只增不改，已提交的绝不回改。
+- **浏览器 UI 默认关闭**：UI（3108）只是可选演示层，默认不启动；仅当 `CHATOS_UI=1` 环境变量或 `--with-ui` 参数时才拉起。agent 消费只走网关 `/api/*`。
+- **启动前先杀旧实例**：启动任何本地服务前，先按命令行匹配杀掉旧 `wechat_ai serve` 实例，避免 SQLite `database is locked`。
+- 本地模型端点/维度/显存不在本仓库复述——唯一权威 `C:\AI\memory\_canonical\LOCAL-MODELS.md`，本文件只写指针。
+
 ## 配置与调用
 
 - 唯一运行配置：`apps/gateway/config/settings.json`；可分发模板：同目录 `settings.example.json`；加载实现：`apps/gateway/src/wechat_ai/config.py`。

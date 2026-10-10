@@ -56,6 +56,13 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway
 | 历史归档 | `docs/archive/`、`archive/`（含已归档的 agent-runtime，勿当现役） |
 | 日志 / 备份 | `var/logs` / `var/backups`，不入 Git |
 
+**合规红线（不可绕过）**：
+
+- 微信原始表**只读、绝不解密、绝不写入**；只读访问一律 SQLite URI `mode=ro`。
+- 派生表（向量/待办/缓存/检索片段）与微信原始表**严格分离**，互不污染。
+- 浏览器 UI（3108）**默认关闭**，仅 `CHATOS_UI=1`（或 `--with-ui`）才启动；agent 只用网关 `/api/*`。
+- 启动任何本地服务前，先按命令行杀掉旧 `wechat_ai serve` 实例，避免 SQLite 锁。
+
 模型调用一律本地（llama-swap，见 LOCAL-MODELS.md），无外部额度。
 
 ## 验收与提交
