@@ -106,7 +106,7 @@ def test_diagnostic_zip_contains_only_redacted_operational_summary(
         report = json.loads(archive.read("diagnostic.json"))
 
     serialized = json.dumps(report)
-    assert report["schemaVersion"] == 22
+    assert report["schemaVersion"] == 25
     assert report["quickCheck"] == "ok"
     assert "jobStatusCounts" in report
     assert "do-not-export" not in serialized

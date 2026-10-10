@@ -654,7 +654,15 @@ class GchatService:
         status: str = "suggested",
         confidence: float = 0.5,
         evidence_conversation_ids: Sequence[str] | None = None,
+        subject_key: str = "",
     ) -> dict[str, Any]:
+        """Create a memory proposal.
+
+        subject_key: 同一主体(scope)+同一属性键+同一 memory_type 的新事实进来时，
+            旧的 active(suggested/confirmed) 记忆不删除，而是被标记为
+            status='superseded' 并通过 superseded_by 指向本新记忆 id。
+            留空 '' 表示不做取代（向后兼容，自由文本记忆不会误取代同类）。
+        """
         content = _text(content, "memory content", 20_000)
         if memory_type not in _MEMORY_TYPES or status != "suggested":
             raise GchatValidationError("invalid memory type or status")
@@ -682,6 +690,7 @@ class GchatService:
                     "memoryType": memory_type,
                     "content": content,
                     "confidence": confidence,
+                    "subjectKey": subject_key,
                 },
                 normalized_evidence,
             )
@@ -690,8 +699,8 @@ class GchatService:
                 """
                 INSERT OR IGNORE INTO gchat_memories(
                     id, scope_kind, scope_id, memory_type, content, status,
-                    confidence, source_hash, created_at, updated_at, confirmed_at
-                ) VALUES (?, ?, ?, ?, ?, 'suggested', ?, ?, ?, ?, NULL)
+                    confidence, source_hash, subject_key, created_at, updated_at, confirmed_at
+                ) VALUES (?, ?, ?, ?, ?, 'suggested', ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     memory_id,
@@ -701,6 +710,7 @@ class GchatService:
                     content,
                     confidence,
                     source_hash,
+                    subject_key,
                     now,
                     now,
                 ),
@@ -712,6 +722,33 @@ class GchatService:
                 memory_id,
                 normalized_evidence,
             )
+            # 事实演化：同一主体(scope_kind+scope_id)+同一属性键(subject_key)
+            # +同一 memory_type 的旧 active 记忆被新事实取代。
+            # 绝不物理删除——旧记录保留，仅状态翻为 superseded，并链到新记忆 id。
+            if subject_key:
+                connection.execute(
+                    """
+                    UPDATE gchat_memories
+                    SET status = 'superseded',
+                        superseded_by = ?,
+                        updated_at = ?
+                    WHERE scope_kind = ?
+                      AND scope_id = ?
+                      AND memory_type = ?
+                      AND subject_key = ?
+                      AND id <> ?
+                      AND status IN ('suggested', 'confirmed')
+                    """,
+                    (
+                        memory_id,
+                        now,
+                        scope_kind,
+                        scope_id,
+                        memory_type,
+                        subject_key,
+                        memory_id,
+                    ),
+                )
             connection.commit()
             return self._memory(connection, memory_id)
 
@@ -793,7 +830,19 @@ class GchatService:
                 ]
             }
 
-    def list_memories(self, *, status: str | None = None, scope_id: str | None = None) -> dict[str, Any]:
+    def list_memories(
+        self,
+        *,
+        status: str | None = None,
+        scope_id: str | None = None,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        """List memories.
+
+        include_superseded: False（默认）时，即使没指定 status，也不返回
+            status='superseded' 的旧记忆；显式传 status='superseded' 或
+            include_superseded=True 才能看到被取代的历史记录。
+        """
         where: list[str] = []
         parameters: list[object] = []
         if status is not None:
@@ -801,6 +850,8 @@ class GchatService:
                 raise GchatValidationError("invalid memory status")
             where.append("status = ?")
             parameters.append(status)
+        elif not include_superseded:
+            where.append("status <> 'superseded'")
         if scope_id is not None:
             where.append("scope_id = ?")
             parameters.append(scope_id)
@@ -1327,6 +1378,12 @@ class GchatService:
             "content": str(row["content"]),
             "status": str(row["status"]),
             "confidence": float(row["confidence"]),
+            "subjectKey": str(row["subject_key"]) if "subject_key" in row.keys() else "",
+            "supersededBy": (
+                str(row["superseded_by"])
+                if "superseded_by" in row.keys() and row["superseded_by"] is not None
+                else None
+            ),
             "evidenceCount": int(evidence_count),
             "createdAt": int(row["created_at"]),
             "updatedAt": int(row["updated_at"]),

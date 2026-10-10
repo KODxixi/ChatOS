@@ -418,3 +418,120 @@ def test_rejected_proposals_are_terminal_and_idempotent(tmp_path: Path) -> None:
         service.update_memory(memory["id"], status="confirmed")
     with pytest.raises(GchatValidationError):
         service.update_decision(decision["id"], status="accepted")
+
+
+def test_memory_fact_evolution_supersedes_old_active_memory_without_deleting(
+    tmp_path: Path,
+) -> None:
+    """新事实进来，同一主体+同一 subject_key+同一 memory_type 的旧记忆被标记
+    superseded（保留原记录），新记忆为 suggested；list_memories 默认不返回
+    superseded，include_superseded=True 才可见。绝不物理删除。
+    """
+    from wechat_ai.services.gchat_service import GchatService
+
+    database_path = tmp_path / "fact-evolution.sqlite"
+    with closing(_seed_database(database_path)) as connection:
+        message_id = int(
+            connection.execute("SELECT id FROM messages").fetchone()[0]
+        )
+        service = GchatService(
+            lambda: sqlite3.connect(database_path),
+            clock=lambda: 9_000,
+        )
+
+        # 1) 写入第一条事实（旧记忆）
+        old = service.create_memory(
+            content="办公室地址在 A 座 3 层",
+            memory_type="fact",
+            scope={"kind": "global", "id": ""},
+            evidence=[{"messageId": message_id, "partId": 1}],
+            subject_key="office.address",
+        )
+        assert old["status"] == "suggested"
+        assert old["subjectKey"] == "office.address"
+        assert old["supersededBy"] is None
+
+        # 确认一下，让它变成 confirmed（active 集合）
+        confirmed_old = service.update_memory(old["id"], status="confirmed")
+        assert confirmed_old["status"] == "confirmed"
+
+        # 2) 写入第二条事实（新事实，同一 subject_key）
+        service._clock = lambda: 10_000
+        new = service.create_memory(
+            content="办公室地址搬到 B 座 12 层",
+            memory_type="fact",
+            scope={"kind": "global", "id": ""},
+            evidence=[{"messageId": message_id, "partId": 1}],
+            subject_key="office.address",
+        )
+        assert new["status"] == "suggested"
+        assert new["id"] != old["id"]
+
+        # 3) 旧记录仍在库里（绝不物理删除），状态翻为 superseded，且 superseded_by 指向新记忆
+        with closing(sqlite3.connect(database_path)) as conn2:
+            conn2.row_factory = sqlite3.Row
+            row = conn2.execute(
+                "SELECT status, superseded_by FROM gchat_memories WHERE id = ?",
+                (old["id"],),
+            ).fetchone()
+            assert row is not None
+            assert row["status"] == "superseded"
+            assert row["superseded_by"] == new["id"]
+            # 新记录也在
+            assert conn2.execute(
+                "SELECT 1 FROM gchat_memories WHERE id = ? AND status = 'suggested'",
+                (new["id"],),
+            ).fetchone() is not None
+
+    # 4) 可见性：默认 list_memories 不返回 superseded
+    visible = service.list_memories()
+    visible_ids = {item["id"] for item in visible["items"]}
+    assert new["id"] in visible_ids
+    assert old["id"] not in visible_ids
+
+    # 5) include_superseded=True 能看到旧记录
+    all_items = service.list_memories(include_superseded=True)
+    all_ids = {item["id"] for item in all_items["items"]}
+    assert old["id"] in all_ids
+    superseded_item = next(
+        item for item in all_items["items"] if item["id"] == old["id"]
+    )
+    assert superseded_item["status"] == "superseded"
+    assert superseded_item["supersededBy"] == new["id"]
+
+    # 6) confirmed_memories_for_scope 自然不返回 superseded（它本来就只查 confirmed）
+    confirmed = service.confirmed_memories_for_scope({"mode": "global"})
+    confirmed_ids = {item["id"] for item in confirmed["items"]}
+    assert old["id"] not in confirmed_ids
+
+
+def test_memory_fact_evolution_no_subject_key_means_no_supersession(
+    tmp_path: Path,
+) -> None:
+    """subject_key 留空时，同类记忆互不取代（向后兼容）。"""
+    from wechat_ai.services.gchat_service import GchatService
+
+    database_path = tmp_path / "no-supersede.sqlite"
+    with closing(_seed_database(database_path)) as connection:
+        message_id = int(
+            connection.execute("SELECT id FROM messages").fetchone()[0]
+        )
+        service = GchatService(lambda: sqlite3.connect(database_path))
+        first = service.create_memory(
+            content="随便一条事实",
+            memory_type="fact",
+            scope={"kind": "global", "id": ""},
+            evidence=[{"messageId": message_id, "partId": 1}],
+        )
+        service.update_memory(first["id"], status="confirmed")
+        second = service.create_memory(
+            content="另一条事实",
+            memory_type="fact",
+            scope={"kind": "global", "id": ""},
+            evidence=[{"messageId": message_id, "partId": 1}],
+        )
+
+    listed = service.list_memories()
+    ids = {item["id"] for item in listed["items"]}
+    assert first["id"] in ids
+    assert second["id"] in ids
