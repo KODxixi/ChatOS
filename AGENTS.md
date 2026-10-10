@@ -5,7 +5,7 @@
 ## 这是什么
 
 ChatOS 是**本地 agent（OpenClaw、Claude Code 等）的微信会话记忆与检索服务**。
-消费方式：HTTP 调用常驻网关 `http://127.0.0.1:8912`（`/api/*`）。浏览器 UI（3108）是**可选演示层**，不是核心；agent 不需要它。
+消费方式：HTTP 调用常驻网关 `http://127.0.0.1:8912`（`/api/*`）。浏览器 UI（3108）是**可选演示层、默认关闭**（`CHATOS_UI=1` 才启动），不是核心；agent 不需要它。
 
 数据本体在 `D:\ChatOS-Vault`：`library\wechat-ai.sqlite`（微信会话，**只读**）+ `knowledge\`（文件文字投影）。
 模型端点唯一权威：`C:\AI\memory\_canonical\LOCAL-MODELS.md` —— **仓库文档只写指针，不复述数字**。

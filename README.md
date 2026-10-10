@@ -13,11 +13,11 @@ npm ci
 npm run build
 cd C:\ChatOS
 node scripts/verify-entry.mjs
-scripts\start_chatos.bat
+scripts\start_chatos.bat            # 唯一启动入口：网关 8912；UI（3108）默认关闭，CHATOS_UI=1 才启动
 node scripts/verify-entry.mjs --live
 ```
 
-统一启动器用 Node 隐藏启动 UI 与网关；仅复用源码、构建及启动身份相符的服务。未知/过期端口占用会报错退出，不杀进程。默认门控只检查源码/构建/配置；`--live` 额外验证运行实例、跳转、HTML 与 assets。
+统一启动器用 Node 隐藏启动网关（UI 默认不启动，`CHATOS_UI=1` 环境变量或 `--with-ui` 参数才启动 UI）；仅复用源码、构建及启动身份相符的服务。未知/过期端口占用会报错退出，不杀进程。默认门控只检查源码/构建/配置；`--live` 验证运行实例（网关必查；UI 在跑时额外校验跳转、HTML 与 assets）。
 
 ## 给 agent 的消费入口（网关 8912）
 

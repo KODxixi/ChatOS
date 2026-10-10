@@ -25,14 +25,16 @@ try {
     } finally { fs.closeSync(out); fs.closeSync(err); }
   };
   if (state.gateway === 'absent') await start('gateway', python, ['-m', 'wechat_ai', 'serve', '--port', new URL(state.gatewayUrl).port, '--no-browser'], gateway);
-  if (state.ui === 'absent') await start('console', process.execPath, [path.join(consoleRoot, 'dist/server.cjs'), '--production'], consoleRoot);
+  // UI 是可选演示层，默认关闭；设环境变量 CHATOS_UI=1 或加 --with-ui 才启动
+  const withUi = process.env.CHATOS_UI === '1' || process.argv.includes('--with-ui');
+  if (state.ui === 'absent' && withUi) await start('console', process.execPath, [path.join(consoleRoot, 'dist/server.cjs'), '--production'], consoleRoot);
   let lastError;
   for (const deadline = Date.now() + 45000; Date.now() < deadline;) {
     await delay(750);
     try {
       const verified = execFileSync(process.execPath, [gate, '--live'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: 'pipe' });
       console.log(verified.trim());
-      console.log(`ChatOS: ${state.uiUrl}`);
+      console.log(`ChatOS: ${state.gatewayUrl}${withUi ? ` (UI ${state.uiUrl})` : ' (UI off)'}`);
       process.exit(0);
     } catch (error) { lastError = error.stderr?.toString() || error.message; }
   }
