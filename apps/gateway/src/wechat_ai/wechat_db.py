@@ -191,6 +191,13 @@ def make_dedupe_key(
     )
 
 
+def _title_is_noise_group(title: str | None, keywords: tuple[str, ...]) -> bool:
+    """群标题命中营销/广告关键词 → 整个会话不入库（与索引侧过滤同规则）。"""
+    if not title:
+        return False
+    return any(kw and kw in title for kw in keywords)
+
+
 def import_sources(
     source: str | Path | Iterable[str | Path],
     application_database: str | Path,
@@ -200,6 +207,8 @@ def import_sources(
     graph_projector: Callable[..., object] | None = None,
     activity_filter_enabled: bool = False,
     activity_filter_inactive_days: int = 30,
+    group_filter_enabled: bool = False,
+    noise_group_keywords: tuple[str, ...] = (),
 ) -> ImportResult:
     sources = discover_sources(source)
     contacts = _load_contacts(sources)
@@ -229,6 +238,8 @@ def import_sources(
     )
 
     try:
+        # 营销/广告群过滤：与索引侧同一套 noiseGroupKeywords，命中则整个会话不入库
+        skipped_noise: set[str] = set()
         for session in sessions.values():
             contact = contacts.get(session.user_name)
             title = (
@@ -236,6 +247,13 @@ def import_sources(
                 if contact is not None
                 else session.title
             )
+            if (
+                group_filter_enabled
+                and _conversation_kind(session.user_name) == "group"
+                and _title_is_noise_group(title, noise_group_keywords)
+            ):
+                skipped_noise.add(session.user_name)
+                continue
             _upsert_conversation(
                 connection,
                 user_name=session.user_name,
@@ -261,6 +279,8 @@ def import_sources(
                 hardlink_database=hardlink_database,
                 media_databases=media_databases,
             ):
+                if user_name in skipped_noise:
+                    continue
                 if user_name not in normalized_conversation_ids:
                     session = sessions.get(user_name)
                     contact = contacts.get(user_name)

@@ -82,6 +82,11 @@ class ImportService:
                     media_root=self._settings.wechat_media_root,
                     activity_filter_enabled=self._settings.activity_filter_enabled,
                     activity_filter_inactive_days=self._settings.activity_filter_inactive_days,
+                    # 营销/广告群不入库：与索引侧过滤同一套规则（noiseGroupKeywords）
+                    group_filter_enabled=self._settings.indexing_group_filter_enabled,
+                    noise_group_keywords=tuple(
+                        self._settings.indexing_noise_group_keywords or ()
+                    ),
                 )
             else:
                 result = self._importer(

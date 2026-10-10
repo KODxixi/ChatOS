@@ -57,11 +57,15 @@ def serve(
 
     from .config import load_settings as _load_settings
     from .services.embedding_service import configure_from_settings as _cfg_embed
+    from .services.embedding_service import start_periodic_sync as _start_index_sync
     from .services.message_cleaning import configure as _cfg_clean
     _s = _load_settings()
     _cfg_embed(_s)
     _cfg_clean(_s)
     app = create_app(_s)
+    # 索引周期线程：文档契约（rules/local-model.md「启动时自动执行 start_periodic_sync()」），
+    # 曾缺失调用导致新消息永不索引；幂等，syncEnabled=false 时自动 no-op
+    _start_index_sync(_s)
     if not no_browser:
         _start_browser_when_ready(base_url)
     uvicorn.run(app, host=LOOPBACK_HOST, port=port)
