@@ -32,6 +32,19 @@ node scripts/verify-entry.mjs --live
 
 完整路由与参数以 `apps/gateway/src/wechat_ai/api/` 源码为准。模型端点与维度**不在仓库文档复述**——见 `rules/local-model.md` 与 `C:\AI\memory\_canonical\LOCAL-MODELS.md`。
 
+## 给 AI 接上（MCP 插头，可选但推荐）
+
+ChatOS 自带零依赖 MCP stdio server（只读），Claude Code / OpenClaw 等一行配置即可查微信记忆：
+
+1. 复制仓库根 `.mcp.json.example` 为你的 AI 工具的项目配置（Claude Code 为 `.mcp.json`，OpenClaw 按 `mcpServers` 同构配置）。
+2. 启动后你的 AI 会看到 5 个工具：`chatos_search`（搜聊天记录）、`chatos_conversations`（会话列表）、`chatos_recent_messages`（读最近消息）、`chatos_tasks`（待办）、`chatos_memory_status`（记忆健康）。
+
+MCP 进程与网关独立：**不需要网关在跑**，只读打开 `D:\ChatOS-Vault` 的库，不写任何数据。手动验证：
+
+```powershell
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway\.venv\Scripts\python.exe -m wechat_ai mcp
+```
+
 ## 边界
 
 | 项 | 位置 |
@@ -39,7 +52,7 @@ node scripts/verify-entry.mjs --live
 | 核心服务（网关 API） | `apps/gateway`，8912 |
 | 可选演示 UI | `apps/chatos-console`，3108（agent 不需要它） |
 | 构建 | `apps/chatos-console/dist` |
-| 数据 | `libraryDb` 配置；当前 `D:\ChatOS-Vault\library\wechat-ai.sqlite`；**原始表只读** |
+| 数据 | `libraryDb` 配置；当前 `D:\ChatOS-Vault\library\wechat-ai.sqlite`；**原始表只读**；会话/知识指针在 `D:\ChatOS-Vault\conversations\` 与 `knowledge/`（本仓库仅指针） |
 | 历史归档 | `docs/archive/`、`archive/`（含已归档的 agent-runtime，勿当现役） |
 | 日志 / 备份 | `var/logs` / `var/backups`，不入 Git |
 

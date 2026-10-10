@@ -40,6 +40,7 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 
 - 消息：`libraryDb` 指定的 SQLite（当前 `D:\ChatOS-Vault\library\wechat-ai.sqlite`），派生表 `message_embeddings`；**微信原始表只读**。
 - 文件：同目录 `knowledge/lancedb` 的 `kb_chatos`，源文档在 `knowledge/index`；这是文件文字投影，不是 Archlib 图文索引。
+- 会话分类：`kind` ∈ direct（私聊）/ group（群聊，`@chatroom` 结尾）/ system（公众号 `gh_` 开头）/ unknown；领域分类（project/work/personal/service/subscription）与活跃度（30 天发言阈值，`activityFilterInactiveDays`）由网关与 UI 使用，会话本体在 `D:\ChatOS-Vault\conversations\`（本仓库只有指针）。
 - 正式网关 8912；`GET /api/vector/status` 返回配置及真实 `indexSpaces`，`GET /api/knowledge/index/status` 返回文件索引状态。无服务时用只读 SQLite 查询 `SELECT model_version,length(embedding)/4,count(*) FROM message_embeddings WHERE status='indexed' GROUP BY model_version,length(embedding)`。
 - 旧索引与当前模型或维度不符时拒绝读写，提示 shadow 重建；不得混入新向量或修改旧 BLOB。
 

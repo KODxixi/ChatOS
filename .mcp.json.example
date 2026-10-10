@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "chatos": {
+      "command": "C:\\ChatOS\\apps\\gateway\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "wechat_ai", "mcp"],
+      "cwd": "C:\\ChatOS\\apps\\gateway"
+    }
+  }
+}

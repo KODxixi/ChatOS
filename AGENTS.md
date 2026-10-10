@@ -25,6 +25,7 @@ curl http://127.0.0.1:8912/api/health  # 确认网关就绪（app=ready）
 |---|---|
 | 改检索 / 向量 / 索引 / 迁移 / 运维规则 | [唯一规则](rules/local-model.md) |
 | 改后端 API、数据库、迁移 SQL | [网关入口](apps/gateway/AGENTS.md) |
+| 给 agent 接入 / 改 MCP 工具 | `apps/gateway/src/wechat_ai/mcp_server.py`、`.mcp.json.example` |
 | 改 UI（可选演示层） | [控制台入口](apps/chatos-console/AGENTS.md) |
 | 跑 / 改启动与验收 | `scripts/start_chatos.mjs`、`scripts/verify-entry.mjs` |
 | 了解产品边界与验收 | [README](README.md#验收与提交) |

@@ -67,6 +67,18 @@ def serve(
     uvicorn.run(app, host=LOOPBACK_HOST, port=port)
 
 
+@cli.command()
+def mcp() -> None:
+    """Run the MCP (Model Context Protocol) stdio server for local agents.
+
+    Read-only access to ChatOS memory (search / conversations / tasks / status).
+    Consumed by Claude Code, OpenClaw and other MCP clients via stdio config.
+    """
+    from .mcp_server import run_stdio_server
+
+    run_stdio_server()
+
+
 def _existing_runtime_status(base_url: str) -> str:
     request = Request(
         f"{base_url}/api/runtime",
