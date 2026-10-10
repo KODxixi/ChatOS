@@ -50,8 +50,8 @@ wechat_ai/
 
 `services/llm_service.py` 是唯一的 LLM 出口。**四条铁律**：
 
-1. **只用本地**：chat/VLM 走 `http://127.0.0.1:9123/v1`（llama-swap · muse-glimmer-30b），
-   embedding/reranker 走 `http://localhost:9123/v1`（llama-swap）。
+1. **只用本地**：chat/VLM 与 embedding/reranker 统一走本地 llama-swap（端点、模型、维度以
+   `C:\AI\memory\_canonical\LOCAL-MODELS.md` 与 `settings.json` 为准，文档不复述数字）。
    **没有外部 API 兜底**（2026-09-21 删除）—— 不可用时降级到规则式结果。
    **目标：零外部模型额度消耗，数据不出本地。**
 2. **必须异步/后台化**：HTTP 请求路径里不得同步等待 LLM。先返回规则式结果，
@@ -61,30 +61,21 @@ wechat_ai/
 4. **必须降级**：`complete()` 失败抛 `OpenAICompatibleUnavailable`，调用方捕获后静默回退规则结果，
    不把错误暴露给用户。
 
-### 本地模型栈
+### 本地模型栈（只写指针，不抄数字）
 
-> 本地模型端点的**唯一权威**：`C:\AI\memory\_canonical\LOCAL-MODELS.md`。下表只列本服务**实际读的环境变量与默认值**。
-
-| 用途 | 模型名 | 端点 |
-|---|---|---|
-| Chat / 摘要 / RAG | `muse-glimmer-30b` | llama-swap `http://127.0.0.1:9123/v1` |
-| **Embedding** | 由 `indexing.model` / `indexing.dimensions` 指定，默认值与迁移见本地检索契约 | llama-swap 9123 |
-| Reranker | `vl-reranker-2b` | llama-swap `http://localhost:9123/v1` |
-
-**embedding/reranker 走 llama-swap 9123（CUDA 全层 GPU，2026-09-21 由 Vulkan 切换）；chat/VLM 与检索栈统一走 llama-swap 9123（muse-glimmer-30b 与检索模型同处一个调度器）。**
+模型端点、模型名、维度、显存与调度：**唯一权威 `C:\AI\memory\_canonical\LOCAL-MODELS.md`**。
+本服务只消费 `settings.json` 与实际环境变量的值；文档不得复述模型数字（2026-09-21 曾因复述漂移，防再犯）。
 
 ### 配置（环境变量，本地优先）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `LOCAL_LLM_BASE_URL` | `http://127.0.0.1:9123/v1` | llama-swap chat 端点 |
-| `LOCAL_LLM_MODEL` | `muse-glimmer-30b` | Muse Glimmer 模型（`--alias`） |
-| `LOCAL_EMBEDDING_BASE_URL` | `http://localhost:9123/v1` | **llama-swap embedding 端点** |
-| `LOCAL_EMBEDDING_MODEL` / `LOCAL_EMBEDDING_DIMENSIONS` | 见本地检索契约 | 模型与维度必须匹配 |
+| `LOCAL_LLM_BASE_URL` / `LOCAL_LLM_MODEL` | 见 LOCAL-MODELS.md 与 `settings.json` | llama-swap chat 端点/模型 |
+| `LOCAL_EMBEDDING_BASE_URL` / `LOCAL_EMBEDDING_MODEL` / `LOCAL_EMBEDDING_DIMENSIONS` | 见 LOCAL-MODELS.md 与 `settings.json` `indexing` 段 | 模型与维度必须匹配 |
 
 `config/settings.json` 中的 `lmStudio.baseUrl` 与环境变量等价，环境变量优先。
 超时：本地 10s，外部 20s；远程调用用标准库 `urllib`，无第三方 SDK 依赖。
-**没有降级链**（2026-09-21 全删）：embedding 与 chat 都只有 llama-swap 9123；
+**没有降级链**（2026-09-21 全删）：embedding 与 chat 都只有本地 llama-swap；
 不可用即明确失败，由调用方降级到规则式结果。
 
 ### 向量索引
@@ -93,7 +84,7 @@ wechat_ai/
 - **模型与维度**：以本地检索契约和运行配置为准。
 - embedding 服务独立于 llm_service，但复用相同的本地优先+降级策略
 - **模型切换**：从原文 shadow 重建，验收后切换；保留旧库回滚，不直接清除生产向量。
-- 批量 128 条/请求（`indexing.batchSize` → `index_conversation`），实测吞吐天花板 ~17 条/秒（~1000 条/分钟）。批量 >256 会断崖、并发无收益、WAL 早已开启，详见仓库根 `rules/vector-index.md`「性能真相」，勿从 SQLite/批量提交理论优化
+- 批量 128 条/请求（`indexing.batchSize` → `index_conversation`），实测吞吐 ~140 条/秒。批量 >256 会断崖、并发无收益、WAL 早已开启，详见仓库根 `rules/local-model.md`「性能真相」，勿从 SQLite/批量提交理论优化
 
 #### 索引过滤规则（硬约束）
 

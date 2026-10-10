@@ -15,7 +15,7 @@ from .runtime_contract import is_compatible_runtime_payload
 
 
 LOOPBACK_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
+DEFAULT_PORT = 8912
 cli = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
