@@ -183,10 +183,17 @@ def filter_todos(
     Returns an empty list when the model legitimately filters everything out
     (valid empty result).  Returns filtered items with cleaned text otherwise.
     """
+    from ..rag_prompt import load_system_prompt
     if not items:
         return items
-        from ..rag_prompt import load_system_prompt
     system = load_system_prompt("todo-filter-system")
+    try:
+        from . import personal_profile as _pp
+        _frag = _pp.prompt_fragment()
+        if _frag:
+            system = system + _frag
+    except Exception:  # noqa: BLE001 - personalization is optional
+        pass
     lines = "\n".join(f"{i}. {it['text']}" for i, it in enumerate(items))
     raw = complete(system, lines, max_tokens=4096, temperature=0.1, local_only=local_only)
     raw = raw.strip()

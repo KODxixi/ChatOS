@@ -104,7 +104,9 @@ def _get_indexable_conversations(db_path: str, *, limit: int | None = None) -> l
         # Get all group conversations with their unique sender counts
         group_rows = conn.execute(
             """
-            SELECT c.id, c.title, COUNT(DISTINCT m.sender_id) as unique_senders
+            SELECT c.id, c.title, COUNT(DISTINCT m.sender_id) as unique_senders,
+                   (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                    WHERE o.conversation_id = c.id) AS explicit_override
             FROM conversations c
             LEFT JOIN messages m ON m.conversation_id = c.id
             WHERE c.kind = 'group'
@@ -112,7 +114,10 @@ def _get_indexable_conversations(db_path: str, *, limit: int | None = None) -> l
             """
         ).fetchall()
         skip_ids: set[str] = set()
-        for gid, title, senders in group_rows:
+        for gid, title, senders, explicit in group_rows:
+            # 人工显式开启的群永不跳过
+            if explicit == 1:
+                continue
             if senders > GROUP_SIZE_THRESHOLD:
                 skip_ids.add(gid)
             elif _is_noise_group(title):
@@ -355,15 +360,24 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
 
 def _can_index_conversation(connection: sqlite3.Connection, conversation_id: str) -> bool:
     row = connection.execute(
-        """SELECT c.kind, c.title FROM conversations c
-           LEFT JOIN conversation_overrides o ON o.conversation_id=c.id
-           WHERE c.id=? AND COALESCE(o.is_indexing_enabled,c.is_indexing_enabled,1)=1""",
+        """SELECT c.kind, c.title,
+                  COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) AS enabled,
+                  o.is_indexing_enabled AS explicit_override
+           FROM conversations c
+           LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
+           WHERE c.id = ?""",
         (conversation_id,),
     ).fetchone()
     if row is None or row[0] not in ("direct", "group"):
         return False
     if row[0] == "direct":
         return True
+    # 人工显式开启（conversation_overrides.is_indexing_enabled=1）优先级最高：
+    # 绕过噪音词与成员数阈值（2026-10-13 用户裁决：点名要入库的群必须入库）。
+    if row[3] == 1:
+        return True
+    if not row[2]:
+        return False
     if _is_noise_group(row[1] or ""):
         return False
     senders = connection.execute(

@@ -59,6 +59,7 @@ class OrganizeStats:
     classified: int = 0
     projectsUpdated: int = 0
     watermarksAdvanced: int = 0
+    groupNoiseSkipped: int = 0
     llmDegraded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +72,7 @@ class OrganizeStats:
             "classified": self.classified,
             "projectsUpdated": self.projectsUpdated,
             "watermarksAdvanced": self.watermarksAdvanced,
+            "groupNoiseSkipped": self.groupNoiseSkipped,
             "llmDegraded": self.llmDegraded,
         }
 
@@ -182,6 +184,7 @@ def _stage_tasks(
     Returns the set of conversation_ids that had new messages scanned.
     """
     from . import message_cleaning as mc
+    from . import personal_profile as profile
     from ..api.tasks import (
         _clean_todo_body,
         _due_date_for,
@@ -193,7 +196,7 @@ def _stage_tasks(
     # Active conversations only — COALESCE override with base table.
     conv_rows = connection.execute(
         """
-        SELECT c.id, c.title
+        SELECT c.id, c.title, c.kind
         FROM conversations c
         LEFT JOIN conversation_overrides o ON o.conversation_id = c.id
         WHERE COALESCE(o.is_indexing_enabled, c.is_indexing_enabled, 1) = 1
@@ -208,6 +211,7 @@ def _stage_tasks(
     for idx, conv in enumerate(conv_rows):
         conv_id = conv["id"]
         conv_title = conv["title"] or ""
+        conv_kind = conv["kind"] or "direct"
 
         # Progress update every 25 conversations (commit first to release write lock).
         if idx % 25 == 0:
@@ -278,6 +282,10 @@ def _stage_tasks(
                 continue
             if len(body) < 10:
                 continue
+            # 个人化闸门：群里未点名史冠宇的消息不算他的待办
+            if conv_kind == "group" and not profile.gate_group_message(body, r["sender_name"] or ""):
+                stats.groupNoiseSkipped += 1
+                continue
             body = mc.truncate(body, 50)
             tid = _task_id(conv_id, int(r["id"]), body)
             new_tasks.append({
@@ -289,7 +297,7 @@ def _stage_tasks(
                 "sentAt": r["sent_at"],
                 "sourceMessageId": int(r["id"]),
                 "status": "todo",
-                "priority": _priority_for(body),
+                "priority": profile.priority_boost(body, r["sender_name"] or "", _priority_for(body), conv_kind, r["sent_at"]),
                 "dueDate": _due_date_for(body),
             })
 

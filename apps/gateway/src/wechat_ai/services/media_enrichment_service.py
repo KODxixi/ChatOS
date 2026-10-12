@@ -94,7 +94,7 @@ class MediaEnrichmentService:
                 path = self._asset_path(row["local_path"])
                 try:
                     content_hash = _path_hash(path)
-                except OSError:
+                except (OSError, MemoryError):
                     path = None
                     content_hash = "missing"
                 if path is not None and row["sha256"] != content_hash:
@@ -496,11 +496,29 @@ def _has_pending_media(connection: sqlite3.Connection) -> bool:
     return row is not None
 
 
+# Guard rails: never hash a huge media file (a 4K video or an oversized
+# image can exhaust memory while the media job runs and take the whole
+# gateway down with a MemoryError — observed 2026-10-13).
+_MAX_HASH_BYTES = 512 * 1024 * 1024
+
+
 def _path_hash(path: Path | None) -> str:
     if path is None:
         return "missing"
+    try:
+        size = path.stat().st_size
+        if size > _MAX_HASH_BYTES:
+            logger.warning("skip hashing oversized media %s (%d bytes)", path, size)
+            return "too_large"
+    except OSError:
+        return "missing"
     digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except MemoryError:
+        # Never let a single unreadable asset take down the process.
+        logger.warning("MemoryError hashing %s; marking unreadable", path)
+        return "unreadable"
