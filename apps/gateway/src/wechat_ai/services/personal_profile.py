@@ -94,6 +94,22 @@ def _tier_lists() -> dict[str, list[str]]:
 _TIER_ORDER = ("client", "leadership", "peer", "colleague", "assigner")
 
 
+def is_owner_message(sender_name: str) -> bool:
+    """True when the message was sent BY the owner himself.
+
+    His own outgoing messages are statements/replies, never todos assigned to
+    him — they must not enter his board.
+    """
+    s = (sender_name or "").strip()
+    if not s:
+        return False
+    p = load_profile()
+    owner = p.get("owner", {}) or {}
+    self_names = list(owner.get("aliases_in_chat", []) or []) + [owner.get("name") or ""]
+    self_names += list(owner.get("addressed_as", []) or [])
+    return any(n and (n == s or n in s) for n in self_names if n)
+
+
 def sender_tier(sender_name: str) -> str:
     """One of client / leadership / peer / colleague / assigner / other."""
     s = (sender_name or "").strip()
@@ -145,6 +161,9 @@ def gate_group_message(text: str, sender_name: str) -> bool:
     rules = p.get("rules", {}) or {}
     if not rules.get("group_requires_addressing", True):
         return True
+    if is_owner_message(sender_name):
+        # His own message is never a todo for him.
+        return False
     if rules.get("drop_directed_elsewhere", True) and is_directed_elsewhere(text):
         return False
     if is_addressed_to_owner(text):
