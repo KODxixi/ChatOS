@@ -164,6 +164,10 @@ def gate_group_message(text: str, sender_name: str) -> bool:
     if is_owner_message(sender_name):
         # His own message is never a todo for him.
         return False
+    tier = sender_tier(sender_name)
+    # 甲方 / 领导的消息永远算数（2026-10-13 裁决：领导很重要，不许豁免）。
+    if tier in ("client", "leadership"):
+        return True
     if rules.get("drop_directed_elsewhere", True) and is_directed_elsewhere(text):
         return False
     if is_addressed_to_owner(text):
@@ -172,9 +176,9 @@ def gate_group_message(text: str, sender_name: str) -> bool:
     # any more.  A leader's team-wide design note ("柱头改一下") is not the
     # owner's todo; only a message that names him is.  The bypass can be
     # re-enabled through rules.leadership_must_be_addressed_in_group = false.
-    if rules.get("leadership_must_be_addressed_in_group", True):
-        return False
-    return sender_tier(sender_name) in ("client", "leadership")
+    if not rules.get("leadership_must_be_addressed_in_group", False):
+        return tier in ("client", "leadership")
+    return False
 
 
 _DEFAULT_STALENESS = {"fresh_days": 3, "medium_days": 14, "low_days": 30}
@@ -224,20 +228,17 @@ def priority_boost(text: str, sender_name: str, current: str, kind: str = "group
     addressed = is_addressed_to_owner(text)
     target = None
     if tier in ("client", "leadership"):
-        # "high" is reserved for items explicitly aimed at the owner.  A
-        # leadership broadcast in a group ("柱头改一下") is team chatter, so
-        # it only earns the ordinary group tier, not the top slot.
-        if kind == "group" and not addressed:
-            target = "medium" if order.get("medium", 1) > order.get(best, 0) else None
-        else:
-            target = boost.get(tier)
+        # 2026-10-13 裁决: 甲方 / 领导的消息一律为重点 (high)，
+        # 无论是否点名、无论在群里还是在私聊。
+        target = "high" if rules.get("client_leadership_always_high", True) else boost.get(tier)
     elif tier in ("peer", "colleague", "assigner") and addressed:
         target = boost.get(tier)
     if target and order.get(target, 1) > order.get(best, 0):
         best = target
-    # "high" is reserved for messages explicitly aimed at the owner (or a
-    # direct chat with him).  Anything else in a group is capped at medium.
-    if kind == "group" and not addressed and order.get(best, 0) > order.get("medium", 1):
+    # Capping only applies to ordinary (non client/leadership) group chatter.
+    if (kind == "group" and not addressed
+            and tier not in ("client", "leadership")
+            and order.get(best, 0) > order.get("medium", 1)):
         best = "medium"
     # Age decay — a "今天要办" from three months ago is not urgent today.
     cap = staleness_cap(sent_at_ms)

@@ -1,6 +1,6 @@
 {
-  "version": 6,
-  "note": "ChatOS 待办个性化画像 v6 — 2026-10-13 G爸 裁决：取消领导群内豁免 + 待办 3 天轮动周期",
+  "version": 7,
+  "note": "ChatOS 待办个性化画像 v7 — 2026-10-13 G爸 裁决：领导消息不豁免、必须入库并标为重点（high）",
   "owner": {
     "name": "史冠宇",
     "role": "霍普 建筑设计总监",
@@ -71,8 +71,9 @@
     "group_requires_addressing": true,
     "direct_always_eligible": true,
     "drop_group_chatter": true,
-    "drop_directed_elsewhere": true,
-    "leadership_must_be_addressed_in_group": true,
+    "drop_directed_elsewhere": false,
+    "leadership_must_be_addressed_in_group": false,
+    "client_leadership_always_high": true,
     "direct_min_priority": "medium",
     "priority_boost": {
       "client": "high",
@@ -89,10 +90,9 @@
   "noise_notes": [
     "群内第三人称技术讨论（模型/材质/光影/渲染参数）通常不是给史冠宇的待办",
     "表扬、感谢、寒暄、通宵叙事不是待办",
-    "以「发一下/改一下」指向其他群成员（非点名史冠宇）视为噪音",
-    "王嵘与史冠宇同级（同为霍普建筑设计总监），其群内发言不默认算指派",
-    "**群聊一律必须点名史冠宇**——甲方/领导在群里未点名他的发言同样不算（2026-10-13 裁决）",
+    "**甲方 / 领导（杨杰峰、龚俊）的消息一律入库且标为重点 high**——2026-10-13 裁决，不许豁免",
+    "王嵘与史冠宇同级（同为霍普建筑设计总监），其群内发言需点名才算",
     "私聊（一对一）视为找他本人，优先级至少 medium",
-    "待办以 3 天为周期轮动：超过 3 天的待办自动流出活跃列表，不做堆积"
+    "待办以 3 天为周期轮动：超过 3 天的待办自动流出活跃列表"
   ]
 }
