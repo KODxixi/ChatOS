@@ -149,8 +149,12 @@ def gate_group_message(text: str, sender_name: str) -> bool:
         return False
     if is_addressed_to_owner(text):
         return True
-    # Only client / leadership bypass the addressing requirement.  Peers
-    # (同级) and colleagues (下级) must address the owner explicitly.
+    # 2026-10-13 裁决: nobody bypasses the addressing requirement in a group
+    # any more.  A leader's team-wide design note ("柱头改一下") is not the
+    # owner's todo; only a message that names him is.  The bypass can be
+    # re-enabled through rules.leadership_must_be_addressed_in_group = false.
+    if rules.get("leadership_must_be_addressed_in_group", True):
+        return False
     return sender_tier(sender_name) in ("client", "leadership")
 
 
@@ -221,6 +225,33 @@ def priority_boost(text: str, sender_name: str, current: str, kind: str = "group
     if cap and order.get(best, 0) > order.get(cap, 0):
         best = cap
     return best
+
+
+def rotate_expired(connection, now_ms: int | None = None) -> int:
+    """Rotate todos older than rules.staleness.archive_days out of the board.
+
+    The owner runs on a rolling 3-day cycle: a todo that has not been acted on
+    inside the window leaves the active list (status -> 'completed', which is
+    reversible) instead of piling up forever.  Returns the number rotated.
+    """
+    import time as _time
+    p = load_profile()
+    if not p:
+        return 0
+    s = (p.get("rules", {}) or {}).get("staleness") or {}
+    days = float(s.get("archive_days", 0) or 0)
+    if days <= 0:
+        return 0
+    now = now_ms if now_ms is not None else int(_time.time() * 1000)
+    cutoff = now - int(days * 86400000)
+    cur = connection.execute(
+        "UPDATE tasks SET status='completed', updated_at=? "
+        "WHERE status='todo' AND sent_at < ?",
+        (str(now), cutoff),
+    )
+    if cur.rowcount:
+        logger.info("rotation: %d stale todos archived (>%.0fd)", cur.rowcount, days)
+    return int(cur.rowcount or 0)
 
 
 def prompt_fragment() -> str:

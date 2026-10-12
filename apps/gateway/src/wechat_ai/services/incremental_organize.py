@@ -193,6 +193,15 @@ def _stage_tasks(
         _priority_for,
     )
 
+    # Rolling 3-day board: rotate stale todos out before extracting new ones.
+    try:
+        rotated = profile.rotate_expired(connection)
+        if rotated:
+            connection.commit()
+            logger.info("organize: rotated %d stale todos out of the board", rotated)
+    except Exception as exc:  # noqa: BLE001 - rotation is best-effort
+        logger.warning("rotation skipped: %s", exc)
+
     # Active conversations only — COALESCE override with base table.
     conv_rows = connection.execute(
         """
