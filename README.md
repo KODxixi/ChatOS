@@ -63,6 +63,18 @@ MCP 进程与网关独立：**不需要网关在跑**，只读打开 `D:\ChatOS-
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway\.venv\Scripts\python.exe -m wechat_ai mcp
 ```
 
+## 检索与记忆能力（现役）
+
+| 能力 | 说明 |
+|---|---|
+| 混合检索 | `/api/search` 与 MCP 搜索：关键词（BM25）+ 语义（向量）双通道，RRF 融合 + 本地精排（llama-swap 重排模型） |
+| 过滤规则 | 营销/闲聊/大群不入库不索引（`indexing.noiseGroupKeywords` + 成员阈值 30；`conversation_overrides` 显式开启优先于自动规则）；`/api/vector/status` 带 `filterRule.version` 指纹与 `filterBreakdown` 明细 |
+| 完成度口径 | `indexedEligible`（当前规则集合内已索引）/ `eligibleMessages`；`completionPct` 恒 ≤100%（`indexed` 是含规则收紧前存量的历史总数，不作分子） |
+| 事实演化 | 新事实覆盖旧记忆时，旧记录标记 `superseded` 并链到新记忆 id（`superseded_by`），**绝不物理删除**；查询默认排除被取代记录，可显式追溯历史 |
+| 记忆卡片 | organize 管线从新会话抽取偏好/关系/项目卡片 → `memory_cards` 派生表 + Vault 卡片文件；`projects`/`project_pulses` 同源产出 |
+
+检索/索引/迁移/运维的唯一规则入口：[rules/local-model.md](rules/local-model.md)。
+
 ## 边界
 
 | 项 | 位置 |

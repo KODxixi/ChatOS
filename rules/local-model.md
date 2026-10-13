@@ -23,6 +23,13 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 - 消息 SQLite、文件 LanceDB 与 Agent Runtime 使用同一检索空间；备份不属于活动索引，不加载备份配置。
 - 文件投影生成器首次生成 registry 时使用网关传入的检索端点与 `indexing` 声明的空间；已有 registry 保留，不由归档覆盖。切换时需显式更新 `knowledge/local-model-registry.yaml`。
 
+### 检索与记忆（现役行为）
+
+- **混合检索**：`/api/search` 与 MCP 搜索为关键词（BM25）+ 语义（向量）双通道，RRF 融合后本地精排（llama-swap 重排模型）。关键词通道不依赖模型；语义通道用注册表 embedder。
+- **事实演化**：`services/gchat_service.py` 维护记忆生命周期——新事实覆盖旧记忆时，旧记录标 `superseded` 并写 `superseded_by` 指向新记忆 id，**绝不物理删除**；查询默认排除 `superseded`（可显式追溯）。改动后必须验证新旧记录的 `status`/`superseded_by` 链。
+- **记忆卡片**：organize 管线（`services/incremental_organize.py`）从新会话采样抽取偏好/关系/项目卡片 → `memory_cards` 派生表（迁移 025）+ Vault 卡片文件；仅在 `affected`（本轮有新会话）时执行。手动触发：venv python 调 `run_memory_cards_pass(conn, vault_root)` 后 **必须 `conn.commit()`**（管线自身不提交）。本地 LLM 空闲自卸时首跑会 `llmDegraded=True`（冷加载超时），预热（先发一次 chat 请求）后重跑即出卡片。
+- **完成度口径**：`/api/vector/status` 的 `completionPct = min(indexedEligible, eligible)/eligible` 恒 ≤100%；`indexed` 是含规则收紧前存量的历史总数，**不可当分子**（曾实测 138.8% 即此误用）。
+
 ## 向量索引（两条链路）
 
 - 消息正文：SQLite `message_embeddings`（`services/embedding_service.py`），BLOB float32。
