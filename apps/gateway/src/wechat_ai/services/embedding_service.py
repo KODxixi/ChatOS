@@ -447,9 +447,21 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
             """,
             [*eligible_ids, _MIN_TEXT_LENGTH],
         ).fetchone()[0]
+        # 完成度只统计"当前 eligible 集合内"已索引的消息：
+        # indexed 是历史存量（含规则收紧前已索引、现在不再 eligible 的会话），
+        # 直接用 indexed/eligible 会超 100%（曾实测 138.8%）。
+        indexed_eligible = connection.execute(
+            f"""
+            SELECT COUNT(*) FROM message_embeddings me
+            WHERE me.status='indexed' AND me.conversation_id IN ({ph})
+            """,
+            eligible_ids,
+        ).fetchone()[0]
     else:
         eligible = 0
-    completion_pct = round(100.0 * indexed / eligible, 1) if eligible else None
+        indexed_eligible = 0
+    # 同规则下 indexed_eligible <= eligible 恒成立；clamp 防未来规则漂移造成假超 100%
+    completion_pct = round(100.0 * min(indexed_eligible, eligible) / eligible, 1) if eligible else None
 
     with _job_lock:
         job = dict(_JOB)
@@ -468,6 +480,8 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
         # 因过滤规则被排除的文本消息数（分母之外）
         "skippedByRule": max(total - eligible, 0),
         "indexed": indexed,
+        # ★ 当前 eligible 集合内已索引的消息数（完成度的真正分子）
+        "indexedEligible": indexed_eligible,
         "failed": failed,
         "conversationsIndexed": convs,
         "eligibleConversations": len(eligible_ids),

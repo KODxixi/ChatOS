@@ -306,6 +306,13 @@ def sample_messages(
     """
     cutoff_ms = int(time.time() * 1000) - recent_days * 86_400_000
     out: list[dict[str, Any]] = []
+    _SAMPLE_COLS = (
+        "id", "conversation_id", "title", "kind", "sender_name", "sent_at", "content",
+    )
+
+    def _row(r) -> dict[str, Any]:
+        # 兼容 sqlite3.Row 与默认 tuple 模式（row_factory 未设时 dict(r) 会崩）
+        return {k: r[i] for i, k in enumerate(_SAMPLE_COLS)}
 
     direct = connection.execute(
         """
@@ -320,7 +327,7 @@ def sample_messages(
         """,
         (cutoff_ms, direct_limit),
     ).fetchall()
-    out.extend(dict(r) for r in direct)
+    out.extend(_row(r) for r in direct)
 
     group = connection.execute(
         """
@@ -336,7 +343,7 @@ def sample_messages(
         """,
         (cutoff_ms, project_group_limit),
     ).fetchall()
-    out.extend(dict(r) for r in group)
+    out.extend(_row(r) for r in group)
     return out
 
 
