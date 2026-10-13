@@ -484,6 +484,21 @@ def _stage_projects(
         conversation_ids=tuple(sorted(to_process)),
     )
     stats.projectsUpdated = len(projects)
+    # P3-1: 此前项目阶段只写 vault Markdown brief，从不写 SQLite，导致
+    # projects/project_pulses 恒 0 行。这里把同一批 ProjectInfo 幂等落库。
+    from .gchat_service import upsert_project_row
+    now_ms = int(time.time() * 1000)
+    for info in projects:
+        upsert_project_row(
+            connection,
+            info.project_id,
+            info.project_name,
+            now_ms=now_ms,
+            summary=(
+                f"{len(info.conversation_ids)} conversations, "
+                f"{info.message_count} messages"
+            ),
+        )
     # Projection wrote successfully: clear pending so we do not redo it.
     _clear_pending(connection, to_process)
     logger.info(
@@ -541,10 +556,26 @@ def run_incremental_organize(
                 project_error = str(exc)
                 stats.llmDegraded = True  # mark degraded so we don't return completed
 
+            # Stage 4b: memory cards (best-effort). Wires the previously
+            # un-called memory_cards pipeline into the organize job so the
+            # memory_cards table finally gets rows; counts are surfaced in the
+            # job result instead of silently staying at 0.
+            memory_report: dict[str, Any] = {}
+            try:
+                from .memory_cards import run_memory_cards_pass
+                memory_report = run_memory_cards_pass(connection, vault_root)
+                if memory_report.get("llmDegraded"):
+                    stats.llmDegraded = True
+            except Exception as exc:  # noqa: BLE001 - 卡片失败不拖垮整理
+                logger.warning("organize.memory_cards failed: %s", exc)
+                memory_report = {"error": str(exc), "llmDegraded": True}
+                stats.llmDegraded = True
+
             # Stage 5: finish — persist result
             connection.commit()
             jobs_service.transition(job_id, status="running", stage="finish", progress_current=5, progress_total=total_stages)
             result = stats.to_dict()
+            result["memoryCards"] = memory_report
             jobs_service.set_result(job_id, result)
             connection.commit()
 

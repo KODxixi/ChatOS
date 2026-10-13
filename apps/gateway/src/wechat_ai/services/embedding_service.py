@@ -1,6 +1,7 @@
 ﻿"""Embedding generation + index management for semantic search / RAG."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -59,6 +60,13 @@ NOISE_GROUP_KEYWORDS = [
 
 _SYNC_INTERVAL_MIN = 15
 _SYNC_ENABLED = False
+# periodic sync 等待索引线程收尾时的 stall 超时：连续这么多秒无进度
+# （_JOB["done"] 不再变化）就判定卡死，告警并强制清掉 running 标志，
+# 避免后台周期线程被一个永不退出的索引线程挂死。
+_SYNC_STALL_TIMEOUT_SEC = 900.0
+# 进入索引候选集所需的最小会话消息数（与 _get_indexable_conversations 的
+# message_count > 10 口径保持一致；单独抽出以便版本哈希引用同一常量）。
+_INDEX_MIN_MESSAGE_COUNT = 10
 
 def configure_from_settings(settings) -> None:
     """Push indexing config from Settings into module-level runtime globals."""
@@ -91,62 +99,147 @@ def _is_noise_group(title: str) -> bool:
     return any(kw in title for kw in NOISE_GROUP_KEYWORDS)
 
 
+def _filter_rule_version() -> str:
+    """稳定哈希：标识当前索引过滤规则集。
+
+    任一阈值/关键词/最小长度变化都会改变这个值，状态接口据此标注
+    "这套完成度是按哪套规则算出来的"，避免运维拿不同口径的数字比较。
+    """
+    payload = {
+        "groupSizeThreshold": GROUP_SIZE_THRESHOLD,
+        "noiseKeywords": NOISE_GROUP_KEYWORDS,
+        "minTextLength": _MIN_TEXT_LENGTH,
+        "minMessageCount": _INDEX_MIN_MESSAGE_COUNT,
+    }
+    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _indexable_ids_and_reasons(
+    conn: sqlite3.Connection,
+) -> tuple[list[str], dict[str, int], set[str]]:
+    """Apply the unified index filter to conversations on an open connection.
+
+    Single source of truth shared by ``_get_indexable_conversations`` and
+    ``get_index_status`` so the status denominator uses the *exact* same rules
+    as the actual indexing pass.
+
+    Filter order (per group/direct conversation):
+      1. ``message_count <= _INDEX_MIN_MESSAGE_COUNT``            -> too_few_messages
+      2. effective switch off (override first, then c.is_indexing_enabled, default 1)
+                                                                 -> disabled_by_switch
+      3. group with ``conversation_overrides.is_indexing_enabled = 1``
+         (human explicitly turned it on)                          -> explicit_enabled (KEEP,
+            bypassing both sender-count and noise-keyword rules)
+      4. group with > GROUP_SIZE_THRESHOLD unique senders        -> too_many_senders (skip)
+      5. group whose title matches NOISE_GROUP_KEYWORDS          -> noise_keyword (skip)
+      6. otherwise                                               -> eligible
+
+    Direct (1-on-1) conversations are never subject to sender-count/noise rules.
+
+    Returns (eligible_ids_ordered_by_message_count_desc, reason_counts, skip_group_ids).
+    """
+    group_rows = conn.execute(
+        """
+        SELECT c.id, c.title, c.message_count, c.is_indexing_enabled,
+               COUNT(DISTINCT m.sender_id) AS unique_senders,
+               (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                WHERE o.conversation_id = c.id) AS explicit_override
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id
+        WHERE c.kind = 'group'
+        GROUP BY c.id
+        """
+    ).fetchall()
+    direct_rows = conn.execute(
+        """
+        SELECT c.id, c.message_count, c.is_indexing_enabled,
+               (SELECT o.is_indexing_enabled FROM conversation_overrides o
+                WHERE o.conversation_id = c.id) AS explicit_override
+        FROM conversations c
+        WHERE c.kind = 'direct'
+        """
+    ).fetchall()
+
+    reasons = {
+        "eligible": 0,
+        "explicit_enabled": 0,
+        "too_many_senders": 0,
+        "noise_keyword": 0,
+        "disabled_by_switch": 0,
+        "too_few_messages": 0,
+    }
+    eligible: list[tuple[str, int]] = []
+    skip_ids: set[str] = set()
+
+    def _effective(explicit, base_enabled) -> int:
+        if explicit is not None:
+            return int(explicit)
+        if base_enabled is not None:
+            return int(base_enabled)
+        return 1
+
+    for gid, title, msg_count, base_enabled, senders, explicit in group_rows:
+        mc = int(msg_count or 0)
+        if mc <= _INDEX_MIN_MESSAGE_COUNT:
+            reasons["too_few_messages"] += 1
+            continue
+        if _effective(explicit, base_enabled) != 1:
+            reasons["disabled_by_switch"] += 1
+            continue
+        # 人工显式开启的群：绕过成员数阈值与噪音关键词（2026-10-13 裁决）。
+        if explicit == 1:
+            reasons["explicit_enabled"] += 1
+            eligible.append((gid, mc))
+            continue
+        if (senders or 0) > GROUP_SIZE_THRESHOLD:
+            reasons["too_many_senders"] += 1
+            skip_ids.add(gid)
+            continue
+        if _is_noise_group(title or ""):
+            reasons["noise_keyword"] += 1
+            skip_ids.add(gid)
+            continue
+        reasons["eligible"] += 1
+        eligible.append((gid, mc))
+
+    for did, msg_count, base_enabled, explicit in direct_rows:
+        mc = int(msg_count or 0)
+        if mc <= _INDEX_MIN_MESSAGE_COUNT:
+            reasons["too_few_messages"] += 1
+            continue
+        if _effective(explicit, base_enabled) != 1:
+            reasons["disabled_by_switch"] += 1
+            continue
+        reasons["eligible"] += 1
+        eligible.append((did, mc))
+
+    eligible.sort(key=lambda row: row[1], reverse=True)
+    return [cid for cid, _ in eligible], reasons, skip_ids
+
+
 def _get_indexable_conversations(db_path: str, *, limit: int | None = None) -> list[str]:
     """Return conversation IDs that should be indexed, applying group filters.
 
     Filters:
     - Skip group chats with > GROUP_SIZE_THRESHOLD unique senders
     - Skip group chats whose title matches NOISE_GROUP_KEYWORDS
+    - Human-explicit ``conversation_overrides.is_indexing_enabled=1`` always wins
     - Always include direct (1-on-1) conversations
     """
     with sqlite3.connect(db_path, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout=30000")
-        # Get all group conversations with their unique sender counts
-        group_rows = conn.execute(
-            """
-            SELECT c.id, c.title, COUNT(DISTINCT m.sender_id) as unique_senders,
-                   (SELECT o.is_indexing_enabled FROM conversation_overrides o
-                    WHERE o.conversation_id = c.id) AS explicit_override
-            FROM conversations c
-            LEFT JOIN messages m ON m.conversation_id = c.id
-            WHERE c.kind = 'group'
-            GROUP BY c.id
-            """
-        ).fetchall()
-        skip_ids: set[str] = set()
-        for gid, title, senders, explicit in group_rows:
-            # 人工显式开启的群永不跳过
-            if explicit == 1:
-                continue
-            if senders > GROUP_SIZE_THRESHOLD:
-                skip_ids.add(gid)
-            elif _is_noise_group(title):
-                skip_ids.add(gid)
-        # Get direct conversations + non-skipped group conversations, ordered by message count
-        placeholders = ",".join("?" * len(skip_ids)) if skip_ids else ""
-        query = """
-            SELECT id FROM conversations
-            WHERE kind IN ('group','direct')
-              AND message_count > 10
-              AND COALESCE(
-                  (SELECT o.is_indexing_enabled FROM conversation_overrides o
-                   WHERE o.conversation_id = conversations.id),
-                  conversations.is_indexing_enabled, 1) = 1
-        """
-        params: list[Any] = []
-        if skip_ids:
-            query += f" AND id NOT IN ({placeholders})"
-            params.extend(skip_ids)
-        query += " ORDER BY message_count DESC"
+        ids, reasons, skip_ids = _indexable_ids_and_reasons(conn)
         if limit:
-            query += " LIMIT ?"
-            params.append(limit)
-        rows = conn.execute(query, params).fetchall()
+            ids = ids[:limit]
         logger.info(
-            "indexable conversations: %d (skipped %d noise/large groups)",
-            len(rows), len(skip_ids),
+            "indexable conversations: %d (eligible=%d explicit=%d skipped_large=%d "
+            "skipped_noise=%d disabled=%d few_msgs=%d)",
+            len(ids), reasons["eligible"], reasons["explicit_enabled"],
+            reasons["too_many_senders"], reasons["noise_keyword"],
+            reasons["disabled_by_switch"], reasons["too_few_messages"],
         )
-        return [r[0] for r in rows]
+        return ids
 
 
 class EmbeddingUnavailable(RuntimeError):
@@ -338,6 +431,26 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
     convs = connection.execute(
         "SELECT COUNT(DISTINCT conversation_id) FROM message_embeddings WHERE status='indexed'"
     ).fetchone()[0]
+
+    # P2-1: 分母口径与 _get_indexable_conversations 完全一致 ——
+    # eligible = 通过过滤规则（成员阈值/噪音词/会话开关/最小长度）的会话里、
+    # 长度达标的文本消息数。这才是"真正该被索引"的集合，不再是全部文本消息。
+    eligible_ids, reasons, _skip = _indexable_ids_and_reasons(connection)
+    if eligible_ids:
+        ph = ",".join("?" for _ in eligible_ids)
+        eligible = connection.execute(
+            f"""
+            SELECT COUNT(*) FROM messages m
+            WHERE m.conversation_id IN ({ph})
+              AND m.type='text' AND m.content IS NOT NULL
+              AND length(m.content)>=?
+            """,
+            [*eligible_ids, _MIN_TEXT_LENGTH],
+        ).fetchone()[0]
+    else:
+        eligible = 0
+    completion_pct = round(100.0 * indexed / eligible, 1) if eligible else None
+
     with _job_lock:
         job = dict(_JOB)
     spaces = connection.execute(
@@ -348,10 +461,27 @@ def get_index_status(connection: sqlite3.Connection) -> dict[str, Any]:
         "configuredModel": MODEL,
         "configuredDimensions": _DIM,
         "indexSpaces": [{"model": r[0], "dimensions": r[1], "count": r[2]} for r in spaces],
+        # 全量文本消息（历史口径，保留兼容）
         "totalMessages": total,
+        # ★ 真正的分母：通过过滤规则的可索引消息数
+        "eligibleMessages": eligible,
+        # 因过滤规则被排除的文本消息数（分母之外）
+        "skippedByRule": max(total - eligible, 0),
         "indexed": indexed,
         "failed": failed,
         "conversationsIndexed": convs,
+        "eligibleConversations": len(eligible_ids),
+        # ★ 完成度 = indexed / eligible（eligible 为 0 时给 None，不报假 0%）
+        "completionPct": completion_pct,
+        # 过滤规则版本：阈值/关键词/最小长度变化即变，便于跨次比对口径
+        "filterRule": {
+            "version": _filter_rule_version(),
+            "groupSizeThreshold": GROUP_SIZE_THRESHOLD,
+            "noiseKeywordCount": len(NOISE_GROUP_KEYWORDS),
+            "minTextLength": _MIN_TEXT_LENGTH,
+        },
+        # 被过滤原因明细（会话数口径），便于审计与纠偏
+        "filterBreakdown": reasons,
         "jobRunning": job["running"],
         "jobProgress": f"{job['done']}/{job['total']}",
         "jobConversation": job["conversation"],
@@ -590,6 +720,42 @@ def verify_index_coverage(db_path: str) -> dict:
     return result
 
 
+def _wait_for_job_to_finish(
+    *, timeout_sec: float = _SYNC_STALL_TIMEOUT_SEC, poll_sec: float = 5.0
+) -> bool:
+    """Block until ``_JOB["running"]`` clears, with stall detection.
+
+    Returns ``True`` if the index thread finished on its own.  If ``running``
+    stays ``True`` while ``_JOB["done"]`` stops advancing for ``timeout_sec``,
+    the index thread is considered wedged: we log an error, force-clear the
+    ``running`` flag (so the next sync round can start), and return ``False``
+    instead of hanging the periodic thread forever.
+    """
+    last_done: Any = -1
+    stalled = 0.0
+    while True:
+        with _job_lock:
+            running = _JOB.get("running")
+            done = _JOB.get("done")
+        if not running:
+            return True
+        if done != last_done:
+            last_done = done
+            stalled = 0.0
+        else:
+            stalled += poll_sec
+            if stalled >= timeout_sec:
+                logger.error(
+                    "periodic sync stall: index job made no progress for %.0fs "
+                    "(done=%s), forcing running=False to unblock next sync",
+                    stalled, done,
+                )
+                with _job_lock:
+                    _JOB["running"] = False
+                return False
+        time.sleep(poll_sec)
+
+
 def start_periodic_sync(settings) -> None:
     """Start a background thread that indexes new messages every N minutes.
 
@@ -613,13 +779,9 @@ def start_periodic_sync(settings) -> None:
             try:
                 logger.info("periodic sync: starting index run")
                 index_all_conversations(db_path)
-                # wait for the background thread to finish
-                while True:
-                    with _job_lock:
-                        running = _JOB.get("running")
-                    if not running:
-                        break
-                    _t.sleep(5)
+                # wait for the background thread to finish, with stall detection
+                # so a wedged index thread can't hang the periodic loop forever.
+                _wait_for_job_to_finish()
                 v = verify_index_coverage(db_path)
                 logger.info("periodic sync done: %s", v)
             except Exception as e:

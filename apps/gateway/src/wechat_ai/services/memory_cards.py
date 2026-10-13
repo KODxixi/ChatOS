@@ -461,3 +461,53 @@ def upsert_db(connection: sqlite3.Connection, cards: list[Card]) -> int:
         )
         n += 1
     return n
+
+
+# ---------------------------------------------------------------------------
+# 端到端管线（采样 → 抽取 → 落盘 → 落表），带可见计数
+# ---------------------------------------------------------------------------
+
+def run_memory_cards_pass(
+    connection: sqlite3.Connection,
+    vault_root: Path,
+    *,
+    complete: CompleteFn | None = None,
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """跑一遍记忆卡片全流程，并返回**可见计数**（不再静默 0 行）。
+
+    链路：``sample_messages``（只读采样）→ ``extract_cards``（本地 LLM，
+    不可用时返回空）→ ``write_cards``（Markdown + index.json，合并旧卡片）
+    → ``upsert_db``（派生表 memory_cards）。
+
+    返回::
+
+        {"sampled": int, "extracted": int, "fileWritten": int,
+         "dbUpserted": int, "llmDegraded": bool}
+
+    - sampled>0 但 extracted==0 → llmDegraded=True（有素材却没抽到卡片，
+      通常是 LLM 不可用或本次确实无记忆点），调用方据此标记降级。
+    - 任何异常都被吞成 llmDegraded=True，绝不向上炸掉调用方管线。
+    """
+    now_ms = now_ms or int(time.time() * 1000)
+    sampled = sample_messages(connection)
+    cards: list[Card] = []
+    try:
+        cards = extract_cards(sampled, complete=complete, now_ms=now_ms)
+    except Exception as exc:  # noqa: BLE001 - 抽取异常不炸管线
+        logger.warning("memory_cards pass: extraction failed: %s", exc)
+    file_written = 0
+    if cards:
+        write_cards(cards, vault_root, now_ms=now_ms)
+        file_written = len(cards)
+    db_upserted = upsert_db(connection, cards)
+    llm_degraded = len(sampled) > 0 and len(cards) == 0
+    report = {
+        "sampled": len(sampled),
+        "extracted": len(cards),
+        "fileWritten": file_written,
+        "dbUpserted": db_upserted,
+        "llmDegraded": bool(llm_degraded),
+    }
+    logger.info("memory_cards pass: %s", report)
+    return report

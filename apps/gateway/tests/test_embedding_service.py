@@ -146,3 +146,121 @@ def test_new_registry_uses_explicit_endpoint_without_reading_host_settings(tmp_p
     value = (tmp_path / "local-model-registry.yaml").read_text(encoding="utf-8")
     assert "http://127.0.0.1:9999" in value
     assert "dimensions: 1024" in value
+
+
+# ---------------------------------------------------------------------------
+# P2-1 / P4-3: status denominator = eligible (filtered) set, not all text.
+# ---------------------------------------------------------------------------
+
+def _seed_filter_lib(tmp_path):
+    from wechat_ai.database import initialize_database
+    path = tmp_path / "lib.sqlite"
+    conn = initialize_database(path)
+    convs = [
+        # id, title, kind, message_count, is_indexing_enabled, domain
+        ("g_noise", "业主交流群", "group", 50, 1, "personal"),
+        ("g_noise_force", "业主交流群", "group", 50, 1, "personal"),  # override=1 → kept
+        ("g_large", "项目大群", "group", 50, 1, "project"),           # 50 senders → too_many
+        ("g_tiny", "小群", "group", 3, 1, "personal"),                # message_count<=10
+        ("d1", "张三", "direct", 20, 1, "personal"),                   # eligible
+    ]
+    for cid, title, kind, mc, en, dom in convs:
+        conn.execute(
+            "INSERT INTO conversations(id, source_conversation_id, title, kind, message_count, is_indexing_enabled, domain)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (cid, cid, title, kind, mc, en, dom),
+        )
+    mid = 1
+    for cid, ns in {"g_noise": 5, "g_noise_force": 5, "g_large": 50}.items():
+        for i in range(ns):
+            conn.execute(
+                "INSERT INTO messages(id, conversation_id, sender_id, sender_name, sent_at, type, content, dedupe_key)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (mid, cid, f"wx_{cid}_{i}", f"用户{i}", 1_790_000_000_000 + i,
+                 "text", f"足够长的内容{i}", f"dk-{mid}"),
+            )
+            mid += 1
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO messages(id, conversation_id, sender_id, sender_name, sent_at, type, content, dedupe_key)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (mid, "d1", "wx_me", "我", 1_790_000_001_000 + i, "text", f"私聊内容足够长{i}", f"dk-{mid}"),
+        )
+        mid += 1
+    # human explicitly turned the noise group back on
+    conn.execute(
+        "INSERT INTO conversation_overrides(conversation_id, is_indexing_enabled, domain, updated_at)"
+        " VALUES (?,1,'personal','2026-10-13')",
+        ("g_noise_force",),
+    )
+    conn.commit()
+    return path, conn
+
+
+def test_index_status_denominator_is_eligible_not_all_text(tmp_path) -> None:
+    from wechat_ai.services import embedding_service as es
+    _path, conn = _seed_filter_lib(tmp_path)
+    status = es.get_index_status(conn)
+
+    # eligible conversations = g_noise_force (explicit on) + d1 (direct)
+    assert status["eligibleConversations"] == 2
+    # eligible messages = 5 (forced noise group) + 3 (direct) = 8
+    assert status["eligibleMessages"] == 8
+    # 63 total text messages; only 8 are eligible → no longer a flat 29% story
+    assert status["totalMessages"] == 63
+    assert status["skippedByRule"] == 63 - 8
+    assert status["indexed"] == 0
+    assert status["completionPct"] == 0.0  # 0/8, not 0/63
+
+    rule = status["filterRule"]
+    assert len(rule["version"]) == 12
+    assert rule["groupSizeThreshold"] == es.GROUP_SIZE_THRESHOLD
+    bd = status["filterBreakdown"]
+    assert bd["eligible"] == 1            # d1
+    assert bd["explicit_enabled"] == 1    # g_noise_force
+    assert bd["too_many_senders"] == 1    # g_large
+    assert bd["noise_keyword"] == 1       # g_noise
+    assert bd["too_few_messages"] == 1    # g_tiny
+    assert bd["disabled_by_switch"] == 0
+
+
+def test_explicit_override_beats_noise_and_size_rules(tmp_path) -> None:
+    from wechat_ai.services import embedding_service as es
+    _path, conn = _seed_filter_lib(tmp_path)
+    ids, reasons, skip = es._indexable_ids_and_reasons(conn)
+    # the noise group a human turned ON must survive, despite matching noise keyword
+    assert "g_noise_force" in ids
+    # the plain noise group / oversized group / tiny group are excluded
+    assert "g_noise" not in ids
+    assert "g_large" not in ids
+    assert "g_tiny" not in ids
+    assert "d1" in ids
+    assert reasons["explicit_enabled"] == 1
+    assert "g_noise_force" not in skip
+    assert "g_noise" in skip
+
+
+def test_periodic_sync_stall_resets_running_flag(monkeypatch) -> None:
+    from wechat_ai.services import embedding_service as es
+    with es._job_lock:
+        es._JOB["running"] = True
+        es._JOB["done"] = 5
+        es._JOB["total"] = 100
+    try:
+        # no progress across polls → stall fires quickly with tiny timeout
+        finished = es._wait_for_job_to_finish(timeout_sec=0.05, poll_sec=0.01)
+        assert finished is False
+        with es._job_lock:
+            assert es._JOB["running"] is False
+    finally:
+        with es._job_lock:
+            es._JOB["running"] = False
+            es._JOB["done"] = 0
+            es._JOB["total"] = 0
+
+
+def test_periodic_sync_returns_true_when_job_finishes(monkeypatch) -> None:
+    from wechat_ai.services import embedding_service as es
+    with es._job_lock:
+        es._JOB["running"] = False
+    assert es._wait_for_job_to_finish(timeout_sec=1.0, poll_sec=0.01) is True

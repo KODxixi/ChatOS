@@ -1523,6 +1523,46 @@ class GchatService:
         )
 
 
+def upsert_project_row(
+    connection: sqlite3.Connection,
+    project_id: str,
+    name: str,
+    *,
+    now_ms: int,
+    summary: str = "",
+) -> None:
+    """Idempotently record a project + its pulse on an open connection.
+
+    Used by the incremental organize pipeline's project stage so that
+    project-extraction output lands in the SQLite ``projects`` /
+    ``project_pulses`` tables (previously it only wrote vault Markdown briefs,
+    leaving these two tables permanently at 0 rows).  Safe to call repeatedly:
+    existing rows keep their identity and are refreshed in place.
+    """
+    name = _text(name, "project name", 200)
+    connection.execute(
+        """
+        INSERT INTO projects(id, name, description, status, created_at, updated_at)
+        VALUES (?, ?, '', 'active', ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            updated_at = excluded.updated_at
+        """,
+        (project_id, name, now_ms, now_ms),
+    )
+    connection.execute(
+        """
+        INSERT INTO project_pulses(project_id, summary, latest_activity_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+            summary = excluded.summary,
+            latest_activity_at = excluded.latest_activity_at,
+            updated_at = excluded.updated_at
+        """,
+        (project_id, summary, now_ms, now_ms),
+    )
+
+
 def _project_assignment_match_score(project_name: str, context: str) -> float:
     normalized_name = project_name.strip().casefold()
     normalized_context = context.casefold()

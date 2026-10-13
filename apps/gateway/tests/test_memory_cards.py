@@ -4,6 +4,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -169,6 +170,78 @@ class TestMigration025(unittest.TestCase):
     def test_upsert_no_table_returns_zero(self):
         conn = sqlite3.connect(":memory:")
         self.assertEqual(mc.upsert_db(conn, [mc.Card(type="fact", subject="A", value="v", sources=[])]), 0)
+
+
+class TestRunMemoryCardsPass(unittest.TestCase):
+    """P3-1: 端到端管线此前无任何调用方 → memory_cards 表恒 0 行。"""
+
+    def _conn_with_messages(self):
+        from wechat_ai.database import initialize_database
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        # initialize_database 在文件库上跑全量迁移；这里直接建最小表结构。
+        conn.executescript(
+            (Path(__file__).resolve().parents[1] / "src" / "wechat_ai"
+             / "migrations" / "025_memory_cards.sql").read_text(encoding="utf-8")
+        )
+        conn.executescript(
+            """
+            CREATE TABLE conversations(id TEXT PRIMARY KEY, title TEXT, kind TEXT,
+                                      domain TEXT, message_count INTEGER, is_indexing_enabled INTEGER);
+            CREATE TABLE messages(id INTEGER PRIMARY KEY, conversation_id TEXT, sender_name TEXT,
+                                  sent_at INTEGER, type TEXT, content TEXT);
+            """
+        )
+        now = int(time.time() * 1000)
+        conn.execute(
+            "INSERT INTO conversations(id, title, kind, domain, message_count, is_indexing_enabled)"
+            " VALUES ('d-x','张三','direct','personal',20,1)"
+        )
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO messages(id, conversation_id, sender_name, sent_at, type, content)"
+                " VALUES (?,?,?,?, 'text', ?)",
+                (900 + i, "d-x", "张三", now - i * 1000, f"我习惯把鼠标 DPI 设成 800 很顺手{i}"),
+            )
+        conn.commit()
+        return conn, now
+
+    def test_pass_writes_table_and_files_with_visible_counts(self):
+        conn, _now = self._conn_with_messages()
+
+        def fake_complete(system, user, **kw):
+            return json.dumps([
+                {"type": "preference", "subject": "Gary", "value": "鼠标 DPI 800",
+                 "confidence": 0.8, "tags": ["工具"], "evidence": [0]},
+            ], ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as td:
+            report = mc.run_memory_cards_pass(conn, Path(td), complete=fake_complete, now_ms=1)
+            self.assertEqual(report["sampled"], 3)
+            self.assertEqual(report["extracted"], 1)
+            self.assertEqual(report["fileWritten"], 1)
+            self.assertEqual(report["dbUpserted"], 1)
+            self.assertFalse(report["llmDegraded"])
+            # 表真的落了一行
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_cards").fetchone()[0], 1)
+            # 文件产物真的写了（不破坏既有：tmp 目录独立）
+            idx = Path(td) / "knowledge" / "memory-cards" / "index.json"
+            self.assertTrue(idx.exists())
+            self.assertEqual(json.loads(idx.read_text(encoding="utf-8"))["count"], 1)
+
+    def test_pass_llm_unavailable_is_visible_not_silent(self):
+        from wechat_ai.openai_compatible import OpenAICompatibleUnavailable
+        conn, _now = self._conn_with_messages()
+
+        def boom(system, user, **kw):
+            raise OpenAICompatibleUnavailable("down")
+
+        report = mc.run_memory_cards_pass(conn, Path(tempfile.gettempdir()), complete=boom, now_ms=1)
+        # 有素材却抽不到 → 标记 degraded，而不是静默 0 行
+        self.assertGreater(report["sampled"], 0)
+        self.assertEqual(report["extracted"], 0)
+        self.assertTrue(report["llmDegraded"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_cards").fetchone()[0], 0)
 
 
 if __name__ == "__main__":

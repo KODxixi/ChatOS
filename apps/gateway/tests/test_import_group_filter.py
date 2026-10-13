@@ -17,8 +17,56 @@ from fixtures.synthetic_sqlite import (
     create_synthetic_sources,
 )
 from wechat_ai import wechat_db
+from wechat_ai.services import embedding_service as es
 
 NOISE_KEYWORDS = ("秒杀", "福利")
+
+
+def _library_db_with_noise_and_override(tmp_path: Path) -> Path:
+    """建一个最小库：噪音群 + 人工显式开启的同名噪音群。"""
+    db = tmp_path / "lib.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE conversations(id TEXT PRIMARY KEY, title TEXT, kind TEXT,
+                                   message_count INTEGER, is_indexing_enabled INTEGER);
+        CREATE TABLE messages(id INTEGER PRIMARY KEY, conversation_id TEXT, sender_id TEXT,
+                              sender_name TEXT, sent_at INTEGER, type TEXT, content TEXT);
+        CREATE TABLE conversation_overrides(conversation_id TEXT PRIMARY KEY,
+                                           is_indexing_enabled INTEGER, domain TEXT, updated_at TEXT);
+        """
+    )
+    # 普通噪音群（命中"交流群"）→ 应被索引过滤跳过
+    conn.execute(
+        "INSERT INTO conversations(id,title,kind,message_count,is_indexing_enabled) VALUES ('g1','业主交流群','group',50,1)"
+    )
+    # 人工显式开启的同名噪音群 → 必须保留（override=1 优先）
+    conn.execute(
+        "INSERT INTO conversations(id,title,kind,message_count,is_indexing_enabled) VALUES ('g2','业主交流群','group',50,1)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_overrides(conversation_id,is_indexing_enabled,domain,updated_at) VALUES ('g2',1,'project','2026-10-13')"
+    )
+    # 每个群 5 个不同发送者，避免触发成员数阈值
+    for cid in ("g1", "g2"):
+        for i in range(5):
+            conn.execute(
+                "INSERT INTO messages(id,conversation_id,sender_id,sender_name,sent_at,type,content) VALUES (?,?,?,?,?,'text',?)",
+                (hash((cid, i)) % 10_000, cid, f"wx_{i}", f"用户{i}", 1_790_000_000_000 + i, "足够长的内容"),
+            )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_index_filter_explicit_override_keeps_noise_group(tmp_path: Path) -> None:
+    """P4-3: conversation_overrides.is_indexing_enabled=1 的噪音群不被硬编码 skip。"""
+    db = _library_db_with_noise_and_override(tmp_path)
+    ids, reasons, skip = es._indexable_ids_and_reasons(sqlite3.connect(db))
+    assert "g2" in ids          # 人工开启 → 保留
+    assert "g1" not in ids      # 普通噪音群 → 跳过
+    assert reasons["explicit_enabled"] == 1
+    assert reasons["noise_keyword"] == 1
 
 
 def _add_marketing_group(fixtures) -> str:
