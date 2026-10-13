@@ -270,6 +270,11 @@ def extract_cards(
     if complete is None:
         from . import llm_service
 
+        # 与 _llm_filter_todos 等调用方一致：本地模型不可用时直接退化，
+        # 不发起连接（也避免把 llm_service 的全局可用开关翻成 False）。
+        if not llm_service.is_available(local_only=True):
+            logger.warning("memory card extraction skipped: local LLM unavailable")
+            return []
         complete = llm_service.complete
     from ..openai_compatible import OpenAICompatibleUnavailable
 
