@@ -16,7 +16,6 @@ def test_live_source_refresh_runs_before_source_discovery(
         source_dir=fixtures.root,
         library_db=tmp_path / "library" / "wechat-ai.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "web" / "dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     calls: list[str] = []

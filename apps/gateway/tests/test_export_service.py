@@ -96,7 +96,6 @@ def create_settings_with_library(root: Path) -> Settings:
         source_dir=root / "sources",
         library_db=library_db,
         output_dir=root / "exports",
-        web_dist=root / "web" / "dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
 

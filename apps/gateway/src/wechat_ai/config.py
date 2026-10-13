@@ -24,14 +24,12 @@ class Settings:
     source_dir: Path
     library_db: Path
     output_dir: Path
-    web_dist: Path
     lm_base_url: str
     retrieval_base_url: str = "http://127.0.0.1:9123/v1"
     wechat_media_root: Path | None = None
     rerank_enabled: bool = True
     activity_filter_enabled: bool = True
     activity_filter_inactive_days: int = 30
-    frontend_url: str | None = None
     config_path: Path | None = None
     config_identity: str | None = None
     # indexing (message embedding pipeline)
@@ -97,8 +95,6 @@ def load_settings(
             raw.get("libraryDb", "data/library/wechat-ai.sqlite"),
         ),
         output_dir=resolve_project_path(root, raw.get("outputDir", "output")),
-        web_dist=resolve_project_path(root, raw.get("webDist", "web/dist")),
-        frontend_url=raw.get("frontendUrl"),
         config_path=path.resolve(),
         config_identity=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
         lm_base_url=str(

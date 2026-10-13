@@ -29,14 +29,6 @@ class ProjectPatchRequest(BaseModel):
         return self
 
 
-class ProjectConversationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    conversationId: str = Field(min_length=1, max_length=500)
-    source: str = Field(default="user", pattern="^(user|agent|rule)$")
-    confidence: float = Field(default=1.0, ge=0, le=1)
-
-
 class ProjectAssignmentCandidateConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -157,30 +149,6 @@ def create_gchat_router(service: GchatService) -> APIRouter:
         except Exception as exc:
             return _error(exc)
 
-    @router.post("/projects/{project_id}/conversations", status_code=204, response_model=None)
-    def assign_project_conversation(
-        project_id: str,
-        request: ProjectConversationRequest,
-    ) -> Response | JSONResponse:
-        try:
-            service.assign_conversation(
-                project_id,
-                request.conversationId,
-                source=request.source,
-                confidence=request.confidence,
-            )
-        except Exception as exc:
-            return _error(exc)
-        return Response(status_code=204)
-
-    @router.delete("/projects/{project_id}/conversations/{conversation_id}", status_code=204, response_model=None)
-    def unassign_project_conversation(project_id: str, conversation_id: str) -> Response | JSONResponse:
-        try:
-            service.unassign_conversation(project_id, conversation_id)
-        except Exception as exc:
-            return _error(exc)
-        return Response(status_code=204)
-
     @router.get(
         "/gchat/project-assignment-candidates",
         response_model=None,
@@ -253,13 +221,6 @@ def create_gchat_router(service: GchatService) -> APIRouter:
                 status=request.status,
                 content=request.content,
             )
-        except Exception as exc:
-            return _error(exc)
-
-    @router.get("/gchat/memories/{memory_id}/evidence", response_model=None)
-    def memory_evidence(memory_id: str) -> dict[str, object] | JSONResponse:
-        try:
-            return service.list_memory_evidence(memory_id)
         except Exception as exc:
             return _error(exc)
 

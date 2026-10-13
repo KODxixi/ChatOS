@@ -1,7 +1,5 @@
 {
   "libraryDb": "D:\\ChatOS-Vault\\library\\wechat-ai.sqlite",
-  "webDist": "../chatos-console/dist",
-  "frontendUrl": "http://127.0.0.1:3108",
   "rerankEnabled": false,
   "indexing": { "model": "text-embedding-qwen3-embedding-0.6b", "dimensions": 1024, "batchSize": 128 },
   "activityFilterEnabled": true,

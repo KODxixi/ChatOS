@@ -44,7 +44,6 @@ SemanticEnricher = Callable[[], object]
 def create_app(
     settings: Settings | None = None,
     *,
-    web_dist: Path | None = None,
     source_probe: Callable[[], str] | None = None,
     library_probe: Callable[[], str] | None = None,
     lm_probe: Callable[[], str] | None = None,
@@ -58,7 +57,7 @@ def create_app(
     Keyword overrides are bootstrap seams (tests and the CLI): when provided
     they replace the plugin's default construction for settings, the database
     initializer, credential store, agent provider factory, semantic enricher,
-    health probes and the web distribution directory.  A ``None`` keyword means
+    health probes.  A ``None`` keyword means
     "use the plugin default", so only non-``None`` values enter the override
     table.
     """
@@ -68,7 +67,6 @@ def create_app(
     }
     provided = {
         "settings": settings,
-        "web_dist": web_dist,
         "probe.source": source_probe,
         "probe.library": library_probe,
         "probe.lm": lm_probe,

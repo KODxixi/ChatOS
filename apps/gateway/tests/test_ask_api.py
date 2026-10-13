@@ -169,7 +169,6 @@ def test_create_app_registers_ask_route_without_requiring_online_model(
         source_dir=tmp_path / "decrypted",
         library_db=tmp_path / "data" / "library.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     app = create_app(
@@ -266,7 +265,6 @@ def test_create_app_injects_reranker_into_ask_pipeline(
         source_dir=tmp_path / "decrypted",
         library_db=database_path,
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
         retrieval_base_url="http://127.0.0.1:9123/v1",
     )

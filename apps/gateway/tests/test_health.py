@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-def _settings(tmp_path: Path, *, web_dist: Path | None = None):
+def _settings(tmp_path: Path):
     from wechat_ai.config import Settings
 
     return Settings(
@@ -14,7 +14,6 @@ def _settings(tmp_path: Path, *, web_dist: Path | None = None):
         source_dir=tmp_path / "source",
         library_db=tmp_path / "data" / "library.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=web_dist or tmp_path / "web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
 
@@ -37,7 +36,6 @@ def test_health_reports_app_source_library_and_lm_independently(
 
     app = create_app(
         _settings(tmp_path),
-        web_dist=tmp_path / "missing-dist",
         source_probe=lambda: source_status,
         library_probe=lambda: library_status,
         lm_probe=lambda: lm_status,
@@ -78,7 +76,6 @@ def test_health_defaults_library_status_to_database_contents(
         source_dir=tmp_path / "missing-source",
         library_db=tmp_path / "data" / "library.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     app = create_app(
@@ -116,7 +113,6 @@ def test_app_health_reports_v13_subsystems_without_private_details(
         source_dir=tmp_path / "missing-source",
         library_db=tmp_path / "data" / "library.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     payload = TestClient(
@@ -253,53 +249,6 @@ def test_media_health_reports_pending_resolved_documents_as_indexing(
     assert health["detail"] == "pending=1"
 
 
-def test_missing_web_build_returns_explicit_placeholder(tmp_path: Path) -> None:
-    from wechat_ai.app import create_app
-
-    app = create_app(
-        _settings(tmp_path, web_dist=tmp_path / "missing-dist"),
-        web_dist=tmp_path / "missing-dist",
-        source_probe=lambda: "missing",
-        lm_probe=lambda: "offline",
-        initialize_database=lambda _path: None,
-    )
-
-    response = TestClient(
-        app,
-        base_url="http://127.0.0.1",
-    ).get("/")
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert "WebUI 尚未构建" in response.text
-
-
-def test_existing_web_build_serves_spa_index(tmp_path: Path) -> None:
-    from wechat_ai.app import create_app
-
-    web_dist = tmp_path / "web" / "dist"
-    web_dist.mkdir(parents=True)
-    (web_dist / "index.html").write_text(
-        "<html><body>compiled-webui</body></html>",
-        encoding="utf-8",
-    )
-    app = create_app(
-        _settings(tmp_path, web_dist=web_dist),
-        web_dist=web_dist,
-        source_probe=lambda: "missing",
-        lm_probe=lambda: "offline",
-        initialize_database=lambda _path: None,
-    )
-
-    response = TestClient(
-        app,
-        base_url="http://127.0.0.1",
-    ).get("/conversations")
-
-    assert response.status_code == 200
-    assert "compiled-webui" in response.text
-
-
 def test_source_probe_uses_schema_discovery_after_sqlite_is_present(
     tmp_path: Path,
 ) -> None:
@@ -353,7 +302,6 @@ def test_create_app_registers_import_route(tmp_path: Path) -> None:
         source_dir=tmp_path / "missing-source",
         library_db=tmp_path / "data" / "library.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     app = create_app(
@@ -379,7 +327,6 @@ def test_create_app_registers_export_route(tmp_path: Path) -> None:
         source_dir=tmp_path / "missing-source",
         library_db=tmp_path / "data" / "library.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     app = create_app(

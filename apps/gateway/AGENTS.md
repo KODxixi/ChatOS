@@ -112,9 +112,9 @@ wechat_ai/
 
 运行配置为本地文件、不入库（同目录 `settings.example.json` 为可入库模板）：
 
-- `apps/gateway/config/settings.json`（`config.py`）：`libraryDb`、`webDist`、
+- `apps/gateway/config/settings.json`（`config.py`）：`libraryDb`、
   `lmStudio.baseUrl`、`llamaSwap.retrievalBaseUrl`、`rerankEnabled`、
-  `activityFilterEnabled` / `activityFilterInactiveDays`；正式配置含 `frontendUrl`，网页跳至正式 UI。
+  `activityFilterEnabled` / `activityFilterInactiveDays`。
 - `apps/gateway/config.json`：`{"db_dir": "<微信 db_storage 路径>"}`，媒体根由此推导。
 - LLM 相关走环境变量（见上表），模板见仓库根 `.env.example`。
 

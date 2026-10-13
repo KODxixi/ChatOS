@@ -4,20 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  verifyBuild, validateLibraryDb, gatewayIdentity, inspectService,
-  GATEWAY_URL, UI_URL,
+  verifyTrackedSources, validateLibraryDb, gatewayIdentity, inspectService,
+  GATEWAY_URL,
 } from './entry-contract.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const gate = path.join(root, 'scripts/verify-entry.mjs');
 const gateway = path.join(root, 'apps/gateway');
-const consoleRoot = path.join(root, 'apps/chatos-console');
 const python = path.join(gateway, '.venv/Scripts/python.exe');
 const logs = path.join(root, 'var/logs');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
 const statusMode = args.includes('--status');
-const withUi = process.env.CHATOS_UI === '1' || args.includes('--with-ui');
 
 const RULE = '='.repeat(68);
 const SUB = '-'.repeat(68);
@@ -37,8 +35,6 @@ function failBlock(bad) {
     next = '新增/改动的源码文件必须先 `git add` 暂存，再启动（预检拒绝未入 Git 的源码）。';
   } else if (reason.includes('Occupied port')) {
     next = `先跑 \`node scripts\\start_chatos.mjs --status\` 查端口占用；确认占用进程是旧 ChatOS 再手动停止，然后重试。本启动器不杀身份不明的进程。`;
-  } else if (reason.includes('Stale build')) {
-    next = `cd apps\\chatos-console && npm run build，然后重试。`;
   } else if (reason.includes('Startup not verified')) {
     next = `查看日志 var\\logs\\gateway.stderr.log；确认 llama-swap（LOCAL-MODELS.md）可用后重试。`;
   } else {
@@ -59,7 +55,7 @@ function fail(bad) {
 
 // 预检门控：源码/构建/库一致性（--status 诊断模式不卡在这里，见 status()）
 function preflightGates() {
-  verifyBuild(root);
+  verifyTrackedSources(root);
   validateLibraryDb(root);
   fs.mkdirSync(logs, { recursive: true });
   if (!fs.existsSync(python)) throw new Error('Missing gateway .venv; run uv sync in apps/gateway');
@@ -103,7 +99,8 @@ async function classify(url, expected) {
 
 async function gatewayHealth() {
   try {
-    const health = await fetch(`${GATEWAY_URL}/api/health`, { signal: AbortSignal.timeout(3000) }).then(r => r.json());
+    // /api/health 跑 operational 探针，依赖不在时实测 4-6 秒；超时太短会把健康网关判成"未就绪"。
+    const health = await fetch(`${GATEWAY_URL}/api/health`, { signal: AbortSignal.timeout(20_000) }).then(r => r.json());
     return health;
   } catch { return null; }
 }
@@ -127,16 +124,9 @@ async function status() {
     const owner = portOwner(port);
     line = `网关 8912: ❌ 端口被占用但身份不兼容${owner ? `（PID ${owner.pid} → ${owner.path}）` : ''}\n         ${g.error}\n         → 先确认占用进程归属；只在确认是旧 ChatOS 时手动停止，再启动。本工具不杀进程。`;
   }
-  const u = await classify(UI_URL, expected);
-  const uiLine = u.state === 'absent'
-    ? `UI 3108: 无监听（正常，演示层默认关闭；CHATOS_UI=1 才需要）`
-    : u.state === 'reuse'
-      ? `UI 3108: 运行中（演示层）`
-      : `UI 3108: 被占用但身份不兼容（${u.error}）`;
   console.log(`ChatOS 状态（${new Date().toLocaleString()}）`);
   console.log(SUB);
   console.log(line);
-  console.log(uiLine);
   console.log(SUB);
   process.exitCode = g.state === 'occupied' ? 2 : 0;
 }
@@ -168,14 +158,12 @@ function spawnSupervised(name, executable, spawnArgs, cwd) {
 const crashWindowMs = 30_000;
 const crashLog = []; // 近期退出时间戳（守护视角的崩溃循环判定）
 let gatewayChild = null;
-let uiChild = null;
 let restartTimer = null;
 let stopping = false;
 
 function onExit(name, child) {
   if (stopping) return;
   if (child === gatewayChild) gatewayChild = null;
-  if (child === uiChild) uiChild = null;
   const now = Date.now();
   while (crashLog.length && now - crashLog[0] > crashWindowMs) crashLog.shift();
   crashLog.push(now);
@@ -207,10 +195,6 @@ function bootOnce() {
     gatewayChild = spawnSupervised('gateway', python,
       ['-m', 'wechat_ai', 'serve', '--port', new URL(GATEWAY_URL).port, '--no-browser'], gateway);
   }
-  if (withUi && !uiChild) {
-    uiChild = spawnSupervised('console', process.execPath,
-      [path.join(consoleRoot, 'dist/server.cjs'), '--production'], consoleRoot);
-  }
 }
 
 async function watch() {
@@ -239,7 +223,7 @@ function shutdown(sig) {
   stopping = true;
   clearTimeout(restartTimer);
   console.log(`[watch] 收到 ${sig}，停止子进程...`);
-  for (const child of [gatewayChild, uiChild]) {
+  for (const child of [gatewayChild]) {
     if (!child) continue;
     try { child.kill(); } catch { /* 已退出 */ }
   }
@@ -258,7 +242,6 @@ async function oneshot() {
     return;
   }
   if (state.gateway === 'absent') await startOnce('gateway', python, ['-m', 'wechat_ai', 'serve', '--port', new URL(GATEWAY_URL).port, '--no-browser'], gateway);
-  if (state.ui === 'absent' && withUi) await startOnce('console', process.execPath, [path.join(consoleRoot, 'dist/server.cjs'), '--production'], consoleRoot);
   let lastError;
   let warnedSlow = false;
   for (const deadline = Date.now() + 120_000; Date.now() < deadline;) {
@@ -270,7 +253,7 @@ async function oneshot() {
     try {
       const verified = execFileSync(process.execPath, [gate, '--live'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: 'pipe' });
       console.log(cleanText(verified));
-      console.log(`ChatOS: ${state.gatewayUrl}${withUi ? ` (UI ${state.uiUrl})` : ' (UI off)'}`);
+      console.log(`ChatOS: ${state.gatewayUrl} (网关；UI 已归档，不再启动)`);
       process.exit(0);
     } catch (error) { lastError = error.stderr?.toString() || error.message; }
   }

@@ -39,7 +39,6 @@ def test_launcher_reuses_running_instance_without_starting_server(
         source_dir=tmp_path / "decrypted",
         library_db=tmp_path / "data" / "library" / "gchat.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "web" / "dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
     opened: list[str] = []

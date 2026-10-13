@@ -22,6 +22,7 @@ apps/gateway/config/settings.json
 config.json
 .env
 .env.*
+!.env.example
 *.log
 
 # Local databases and runtime data

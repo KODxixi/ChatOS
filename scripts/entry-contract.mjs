@@ -5,13 +5,10 @@ import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
-export const UI_URL = 'http://127.0.0.1:3108';
 export const GATEWAY_URL = 'http://127.0.0.1:8912';
-export const SOURCE_RELATIVE = 'apps/chatos-console';
-export const ORIGIN_COMMIT = 'e9d78e9c3f1c216c668a4810fe890d764131b88a';
+// 会进运行时的源码：启动器脚本 + 网关源码（见 gatewayFiles）。
+// 前端 UI 已归档到 archive/chatos-console，不再参与身份与验收。
 export const SOURCE_INPUTS = [
-  ...['src/', 'public/', 'scripts/', 'server.ts', 'index.html', 'package.json',
-    'package-lock.json', 'tsconfig.json', 'vite.config.ts'].map(name => `${SOURCE_RELATIVE}/${name}`),
   'scripts/entry-contract.mjs', 'scripts/verify-entry.mjs',
   'scripts/start_chatos.mjs', 'scripts/start_chatos.bat',
 ];
@@ -33,10 +30,6 @@ export function hashFiles(root, files) {
   return hash.digest('hex');
 }
 
-export function sourceFiles(root) {
-  return SOURCE_INPUTS.flatMap(name => name.endsWith('/') ? filesUnder(path.join(root, name)) : [path.join(root, name)]);
-}
-
 function gatewayFiles(root) {
   const gateway = path.join(root, 'apps/gateway');
   const files = filesUnder(path.join(gateway, 'src')).filter(file => /\.(py|sql)$/.test(file));
@@ -44,39 +37,13 @@ function gatewayFiles(root) {
   return files;
 }
 
-export function sourceIdentity(root) {
-  const sourceHash = hashFiles(root, sourceFiles(root));
-  return { contractVersion: 1, sourceRelative: SOURCE_RELATIVE, originCommit: ORIGIN_COMMIT, sourceHash, buildId: sourceHash };
-}
-
-export function buildProvenance(root) {
-  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
-  return {
-    repositoryCommit: git(['rev-parse', 'HEAD']),
-    sourceDirty: git(['status', '--porcelain', '--untracked-files=all', '--', ...SOURCE_INPUTS]) !== '',
-  };
-}
-
-export function outputIdentity(dist) {
-  return hashFiles(dist, filesUnder(dist).filter(file => path.relative(dist, file) !== 'build.json'));
-}
-
-export function verifyBuild(root) {
+/** 预检门控：进运行时的源码必须已入 Git 索引（防止"本地改了但跑的是旧进程"）。 */
+export function verifyTrackedSources(root) {
   const tracked = new Set(execFileSync('git', ['ls-files', '-z', '--cached'], { cwd: root, encoding: 'utf8' }).split('\0'));
-  for (const file of [...sourceFiles(root), ...gatewayFiles(root)]) {
+  for (const file of [...SOURCE_INPUTS.map(name => path.join(root, name)), ...gatewayFiles(root)]) {
     const relative = path.relative(root, file).replaceAll('\\', '/');
     if (!tracked.has(relative)) throw new Error(`Source not Git tracked (stage it first): ${relative}`);
   }
-  const dist = path.join(root, SOURCE_RELATIVE, 'dist');
-  const build = JSON.parse(fs.readFileSync(path.join(dist, 'build.json'), 'utf8'));
-  for (const [key, value] of Object.entries(sourceIdentity(root))) {
-    if (build[key] !== value) throw new Error(`Stale build ${key}; run npm run build in ${SOURCE_RELATIVE}`);
-  }
-  for (const file of ['index.html', 'server.cjs']) {
-    if (!fs.statSync(path.join(dist, file)).isFile()) throw new Error(`Missing build output: ${file}`);
-  }
-  if (build.outputHash !== outputIdentity(dist)) throw new Error('Build output identity mismatch; rebuild');
-  return build;
 }
 
 export function settingsPath(root) {
@@ -116,25 +83,12 @@ export function validateLibraryDb(root) {
   }
 }
 
-export function captureUiRuntime(root, embeddedBuild, codePath) {
-  return {
-    ...embeddedBuild,
-    service: 'chatos-console',
-    sourceRoot: path.resolve(root, SOURCE_RELATIVE),
-    configPath: settingsPath(root),
-    configIdentity: crypto.createHash('sha256').update(fs.readFileSync(settingsPath(root))).digest('hex'),
-    libraryDb: resolveLibraryDb(root),
-    startupCodeIdentity: crypto.createHash('sha256').update(fs.readFileSync(codePath)).digest('hex'),
-    outputHash: outputIdentity(path.join(root, SOURCE_RELATIVE, 'dist')),
-  };
-}
-
 export function gatewayIdentity(root) {
   const gateway = path.join(root, 'apps/gateway');
   return {
     service: 'chatos-gateway', sourceRoot: gateway,
     startupCodeIdentity: hashFiles(gateway, gatewayFiles(root)),
-    libraryDb: resolveLibraryDb(root), frontendUrl: UI_URL,
+    libraryDb: resolveLibraryDb(root),
     configPath: settingsPath(root),
     configIdentity: crypto.createHash('sha256').update(fs.readFileSync(settingsPath(root))).digest('hex'),
   };

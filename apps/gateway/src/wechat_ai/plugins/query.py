@@ -16,7 +16,6 @@ def apply(ctx) -> None:
     from ..api.search import create_search_router
     from ..api.sources import create_sources_router
     from ..api.tasks import create_tasks_router
-    from ..api.audit import create_audit_router
     from ..api.vector import create_vector_router
 
     connection_factory = ctx.get("db.connection_factory")
@@ -78,5 +77,4 @@ def apply(ctx) -> None:
     )
     ctx.add_router("/api", create_graph_router(connection_factory))
     ctx.add_router("/api", create_tasks_router(connection_factory))
-    ctx.add_router("/api", create_audit_router(connection_factory))
     ctx.add_router("/api", create_vector_router(connection_factory, str(settings.library_db)))

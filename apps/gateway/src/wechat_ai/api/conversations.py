@@ -14,8 +14,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ._errors import api_error_response, not_found_response as _not_found_response
-from ..services.activity_filter import evaluate_activity_overrides
-from ..services.conversation_classifier import classify_all_overrides
 from ..services.project_extractor import extract_projects
 from ..services import message_cleaning as mc
 from ..services.conversation_service import (
@@ -32,7 +30,6 @@ from ..services.conversation_service import (
 from ..wechat_media import add_media_readiness
 
 logger = logging.getLogger(__name__)
-
 
 
 class ConversationResponse(BaseModel):
@@ -126,31 +123,6 @@ class ConversationPage(BaseModel):
 class MessagePage(BaseModel):
     items: list[MessageResponse]
     nextCursor: str | None
-
-
-class ConversationPreview(BaseModel):
-    id: str
-    title: str
-    kind: str
-    messageCount: int
-    todoCount: int = 0
-    lastMessageAt: int | None
-    isIndexingEnabled: bool
-    domain: str | None
-    projectId: str | None
-    projectRole: str | None
-    classificationStatus: str | None
-    latestMessage: str | None
-    latestSender: str | None
-    latestSentAt: int | None
-    topSpeakers: list[dict[str, object]]
-    summary: str | None = None
-    topTodo: str | None = None
-
-
-class ConversationPreviewPage(BaseModel):
-    items: list[ConversationPreview]
-    total: int
 
 
 class ConversationPatch(BaseModel):
@@ -297,181 +269,6 @@ def create_conversations_router(
                 message="分页游标无效。",
             )
 
-    @router.get("/conversations/preview", response_model=ConversationPreviewPage)
-    def conversation_previews(
-        limit: Annotated[int, Query(ge=1, le=200)] = 100,
-        onlyActive: bool = True,
-        domain: str | None = None,
-    ) -> dict[str, object]:
-        """Return conversations with latest message preview and top speakers.
-
-        Optimized for card-based UI: avoids N+1 message fetches.
-        """
-        with closing(connection_factory()) as connection:
-            connection.row_factory = sqlite3.Row
-
-            where = []
-            params: list[object] = []
-            if onlyActive:
-                where.append("COALESCE(o.is_indexing_enabled, conversations.is_indexing_enabled, 1) = 1")
-            if domain:
-                where.append("COALESCE(o.domain, conversations.domain) = ?")
-                params.append(domain)
-            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-
-            convs = connection.execute(
-                f"""
-                SELECT conversations.id, conversations.title, conversations.kind,
-                       conversations.message_count, conversations.last_message_at,
-                       COALESCE(o.is_indexing_enabled, conversations.is_indexing_enabled, 1) AS is_indexing_enabled,
-                       COALESCE(o.domain, conversations.domain) AS domain,
-                       COALESCE(o.project_id, conversations.project_id) AS project_id,
-                       COALESCE(o.project_role, conversations.project_role) AS project_role,
-                       COALESCE(o.classification_status, conversations.classification_status, 'needs_review') AS classification_status
-                FROM conversations
-                LEFT JOIN conversation_overrides o ON o.conversation_id = conversations.id
-                {where_sql}
-                ORDER BY conversations.last_message_at DESC
-                LIMIT ?
-                """,
-                [*params, limit],
-            ).fetchall()
-
-            items = []
-            # batch todo counts for all previewed conversations
-            todo_counts: dict[str, int] = {}
-            try:
-                ids = [conv["id"] for conv in convs]
-                if ids:
-                    placeholders = ",".join("?" for _ in ids)
-                    for r in connection.execute(
-                        f"SELECT conversation_id, COUNT(*) c FROM tasks "
-                        f"WHERE status='todo' AND conversation_id IN ({placeholders}) "
-                        f"GROUP BY conversation_id",
-                        ids,
-                    ).fetchall():
-                        todo_counts[r["conversation_id"]] = r["c"]
-            except Exception as _e:
-                logging.getLogger(__name__).warning("todoCount batch failed: %s", _e)
-
-            # batch topTodo: most recent todo per conversation
-            top_todos: dict[str, str] = {}
-            try:
-                if ids:
-                    for r in connection.execute(
-                        f"SELECT conversation_id, content FROM tasks "
-                        f"WHERE status='todo' AND conversation_id IN ({placeholders}) "
-                        f"ORDER BY sent_at DESC",
-                        ids,
-                    ).fetchall():
-                        if r["conversation_id"] not in top_todos:
-                            top_todos[r["conversation_id"]] = r["content"]
-            except Exception as _e:
-                logging.getLogger(__name__).warning("topTodo batch failed: %s", _e)
-
-            # batch summary from llm_cache (task_type='summary')
-            summaries: dict[str, str] = {}
-            try:
-                if ids:
-                    for r in connection.execute(
-                        f"SELECT reference_id, result FROM llm_cache "
-                        f"WHERE task_type='summary' AND reference_id IN ({placeholders}) "
-                        f"ORDER BY created_at DESC",
-                        ids,
-                    ).fetchall():
-                        summaries.setdefault(r["reference_id"], r["result"])
-            except Exception as _e:
-                logging.getLogger(__name__).warning("summary batch failed: %s", _e)
-            for conv in convs:
-                # Look back up to 10 recent messages; pick the first that has
-                # real readable text (skip pure image/voice/video/call/etc.).
-                recent = connection.execute(
-                    """
-                    SELECT type, content, sender_name, sent_at
-                    FROM messages
-                    WHERE conversation_id = ? AND content IS NOT NULL AND length(content) > 0
-                    ORDER BY sent_at DESC
-                    LIMIT 10
-                    """,
-                    (conv["id"],),
-                ).fetchall()
-
-                latest_row = None
-                media_seen: list[str] = []
-                for r in recent:
-                    if r["type"] == "text":
-                        body = mc.clean_summary_body(r["content"] or "")
-                        if not mc.is_filler(body) and len(body) >= 2:
-                            latest_row = (body, r["sender_name"], r["sent_at"])
-                            break
-                        # else: pure-emoji text, keep scanning
-                    label = mc.MEDIA_LABELS.get(r["type"])
-                    if label and label not in media_seen:
-                        media_seen.append(label)
-
-                if latest_row is not None:
-                    body, sender, sent_at = latest_row
-                    body = mc.truncate(body, 40)
-                    if conv["kind"] == "group":
-                        latest_msg = f"{sender}: {body}" if sender else body
-                    else:
-                        latest_msg = body
-                    latest_sender = sender
-                    latest_sent_at = sent_at
-                elif media_seen:
-                    # all recent are media — return a compact label list
-                    latest_msg = " ".join(media_seen[:4])
-                    latest_sender = recent[0]["sender_name"] if recent else None
-                    latest_sent_at = recent[0]["sent_at"] if recent else None
-                else:
-                    latest_msg = None
-                    latest_sender = None
-                    latest_sent_at = None
-
-                # Top speakers (for group chats)
-                top_speakers = []
-                if conv["kind"] == "group":
-                    speakers = connection.execute(
-                        """
-                        SELECT sender_name, COUNT(*) as cnt
-                        FROM messages
-                        WHERE conversation_id = ? AND sender_name IS NOT NULL AND sender_name != ''
-                        GROUP BY sender_name
-                        ORDER BY cnt DESC
-                        LIMIT 3
-                        """,
-                        (conv["id"],),
-                    ).fetchall()
-                    top_speakers = [{"name": s["sender_name"], "count": s["cnt"]} for s in speakers]
-
-                items.append({
-                    "id": conv["id"],
-                    "title": conv["title"] or conv["id"],
-                    "kind": conv["kind"],
-                    "messageCount": conv["message_count"],
-                    "todoCount": todo_counts.get(conv["id"], 0),
-                    "lastMessageAt": conv["last_message_at"],
-                    "isIndexingEnabled": bool(conv["is_indexing_enabled"]),
-                    "domain": conv["domain"],
-                    "projectId": conv["project_id"],
-                    "projectRole": conv["project_role"],
-                    "classificationStatus": conv["classification_status"],
-                    "latestMessage": latest_msg,
-                    "latestSender": latest_sender,
-                    "latestSentAt": latest_sent_at,
-                    "topSpeakers": top_speakers,
-                    "summary": summaries.get(conv["id"]),
-                    "topTodo": top_todos.get(conv["id"]),
-                })
-
-            total = connection.execute(
-                f"SELECT COUNT(*) FROM conversations "
-                f"LEFT JOIN conversation_overrides o ON o.conversation_id = conversations.id "
-                f"{where_sql}", params,
-            ).fetchone()[0]
-
-        return {"items": items, "total": total}
-
     @router.get(
         "/conversations/{conversation_id}",
         response_model=ConversationResponse,
@@ -557,80 +354,6 @@ def create_conversations_router(
                 code="INVALID_CURSOR",
                 message="分页游标无效。",
             )
-
-    @router.post("/conversations/evaluate-activity")
-    def evaluate_activity_endpoint(
-        inactiveDays: Annotated[int, Query(ge=1, le=365)] = 30,
-    ) -> dict[str, Any]:
-        """Evaluate all conversations by user activity and mark inactive ones.
-
-        Conversations where the user has sent zero messages in the last
-        *inactiveDays* days are marked ``isIndexingEnabled=false`` and their
-        retrieval chunks are removed immediately.
-        """
-        with closing(connection_factory()) as connection:
-            connection.row_factory = sqlite3.Row
-            result = evaluate_activity_overrides(
-                connection,
-                inactive_days=inactiveDays,
-            )
-        return {
-            "userWxid": result.user_wxid,
-            "inactiveDays": result.inactive_days,
-            "evaluated": result.evaluated,
-            "markedInactive": result.marked_inactive,
-            "alreadyInactive": result.already_inactive,
-            "active": result.active,
-            "markedIds": list(result.marked_ids),
-        }
-
-    @router.post("/conversations/classify")
-    def classify_conversations_endpoint(
-        all: bool = False,
-    ) -> dict[str, object]:
-        """Run automatic conversation classification.
-
-        By default only classifies conversations marked needs_review.
-        Set ?all=true to re-classify everything.
-        """
-        with closing(connection_factory()) as connection:
-            connection.row_factory = sqlite3.Row
-            result = classify_all_overrides(connection, only_needs_review=not all)
-        return {
-            "evaluated": result.evaluated,
-            "classified": result.classified,
-            "needsReview": result.needs_review,
-            "byDomain": result.by_domain,
-        }
-
-    @router.post("/conversations/extract-projects")
-    def extract_projects_endpoint(
-        minMessages: Annotated[int, Query(ge=1, le=10000)] = 10,
-    ) -> dict[str, object]:
-        """Extract project information from project-domain conversations.
-
-        Generates project-brief.md files in the vault for syncing to ArchOS.
-        """
-        with closing(connection_factory()) as connection:
-            connection.row_factory = sqlite3.Row
-            vault_root = Path(connection.execute("PRAGMA database_list").fetchone()[2]).parent.parent.parent
-            projects = extract_projects(
-                connection, vault_root=vault_root, min_messages=minMessages,
-            )
-        return {
-            "projectCount": len(projects),
-            "projects": [
-                {
-                    "projectId": p.project_id,
-                    "projectName": p.project_name,
-                    "messageCount": p.message_count,
-                    "decisions": len(p.decisions),
-                    "milestones": len(p.milestones),
-                    "clientFeedback": len(p.client_feedback),
-                }
-                for p in sorted(projects, key=lambda x: -x.message_count)
-            ],
-        }
 
     @router.get("/conversations/projects")
     def list_projects(
@@ -1146,88 +869,7 @@ def create_conversations_router(
 
         return {"items": items, "total": len(items)}
 
-    @router.get("/conversations/{conversation_id}/links", response_model=None)
-    def conversation_links(
-        conversation_id: str,
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    ) -> dict[str, Any] | JSONResponse:
-        """List deduplicated links extracted from a conversation's text messages."""
-        import re as _re
-        with closing(connection_factory()) as connection:
-            connection.row_factory = sqlite3.Row
-
-            conv = connection.execute(
-                "SELECT id FROM conversations WHERE id = ?",
-                (conversation_id,),
-            ).fetchone()
-            if conv is None:
-                return _not_found_response()
-
-            url_re = _re.compile(r"https?://[^\s\u4e00-\u9fa5，。！、）)】\]\"'<>]+")
-            rows = connection.execute(
-                """
-                SELECT sender_name, sent_at, content
-                FROM messages
-                WHERE conversation_id = ? AND type = 'text'
-                  AND content LIKE '%http%'
-                ORDER BY sent_at DESC
-                LIMIT 1000
-                """,
-                (conversation_id,),
-            ).fetchall()
-
-            link_map: dict[str, dict[str, Any]] = {}
-            for r in rows:
-                for url in url_re.findall(r["content"] or ""):
-                    entry = link_map.get(url)
-                    if entry is None:
-                        # title: 40 chars of surrounding text before the url
-                        idx = (r["content"] or "").find(url)
-                        ctx = (r["content"] or "")[max(0, idx - 40):idx].strip()
-                        link_map[url] = {
-                            "url": url,
-                            "title": ctx[-40:] if ctx else None,
-                            "senderName": r["sender_name"],
-                            "sentAt": r["sent_at"],
-                            "count": 1,
-                        }
-                    else:
-                        entry["count"] += 1
-
-            items = sorted(link_map.values(), key=lambda e: -e["sentAt"])[:limit]
-
-        return {"items": items, "total": len(link_map)}
-
-
     return router
-
-
-def api_error_response(
-    *,
-    status_code: int,
-    code: str,
-    message: str,
-    retryable: bool = False,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "error": {
-                "code": code,
-                "message": message,
-                "retryable": retryable,
-                "details": {},
-            }
-        },
-    )
-
-
-# _not_found_response imported from ._errors
-_ = api_error_response(
-    status_code=404,
-    code="CONVERSATION_NOT_FOUND",
-    message="未找到会话。",
-    )
 
 
 async def _validation_error_handler(

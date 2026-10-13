@@ -49,24 +49,6 @@ GATEWAY_SOURCE_ROOT = Path(__file__).resolve().parents[2]
 GATEWAY_STARTUP_IDENTITY = gateway_source_identity(GATEWAY_SOURCE_ROOT)
 
 
-def web_build_id(web_dist: Path) -> str:
-    """Return a deterministic content hash without exposing local paths."""
-
-    digest = hashlib.sha256()
-    if web_dist.is_dir():
-        files = (candidate for candidate in web_dist.rglob("*") if candidate.is_file())
-        for path in sorted(
-            files,
-            key=lambda candidate: candidate.relative_to(web_dist).as_posix(),
-        ):
-            relative_path = path.relative_to(web_dist).as_posix().encode("utf-8")
-            digest.update(relative_path)
-            digest.update(b"\0")
-            digest.update(path.read_bytes())
-            digest.update(b"\0")
-    return digest.hexdigest()
-
-
 def is_compatible_runtime_payload(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False

@@ -18,7 +18,6 @@ def _settings(tmp_path: Path):
         source_dir=tmp_path / "decrypted",
         library_db=tmp_path / "data" / "library" / "wechat-ai.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
 

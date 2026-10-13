@@ -36,7 +36,6 @@ def make_settings(root: Path, source_dir: Path) -> Settings:
         source_dir=source_dir,
         library_db=root / "library" / "wechat-ai.sqlite",
         output_dir=root / "output",
-        web_dist=root / "web" / "dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
 

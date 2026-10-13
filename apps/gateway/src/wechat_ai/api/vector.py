@@ -1,35 +1,22 @@
-"""Vector index + semantic search + RAG API."""
+"""Vector index API."""
 from __future__ import annotations
 
-import logging
-import re
-import sqlite3
-import time
 from contextlib import closing
 from typing import Any
 
 from fastapi import APIRouter, Body, Query
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from ._errors import api_error_response
 from ..services import embedding_service as es
-from ..services import llm_service as llm
 from ..services.conversation_service import ConnectionFactory
 
-logger = logging.getLogger(__name__)
 
 
 class IndexBody(BaseModel):
     conversation_id: Optional[str] = None
     full: bool = False
-
-
-class RagBody(BaseModel):
-    question: str
-    conversationId: str | None = None
-    limit: int = 8
 
 
 def create_vector_router(connection_factory: ConnectionFactory, db_path: str) -> APIRouter:
@@ -75,48 +62,5 @@ def create_vector_router(connection_factory: ConnectionFactory, db_path: str) ->
                 db.execute("DELETE FROM message_embeddings")
             db.commit()
         return {"ok": True}
-
-    @router.get("/search/semantic")
-    def semantic_search(
-        q: str = Query(...),
-        conversation_id: str | None = None,
-        limit: int = 10,
-        threshold: float = 0.3,
-    ) -> dict[str, Any]:
-        with closing(connection_factory()) as db:
-            results = es.search(db, q, conversation_id=conversation_id, limit=limit, threshold=threshold)
-        # highlight query terms
-        terms = [t for t in re.split(r"\s+", q) if len(t) >= 2]
-        for r in results:
-            c = r["content"]
-            for t in terms:
-                c = re.sub(f"({re.escape(t)})", r"<mark>\1</mark>", c)
-            r["content"] = c
-        return {"query": q, "results": results, "count": len(results)}
-
-    @router.post("/rag/ask")
-    def rag_ask(body: RagBody) -> dict[str, Any]:
-        with closing(connection_factory()) as db:
-            hits = es.search(db, body.question, conversation_id=body.conversationId,
-                             limit=body.limit, threshold=0.25)
-        if not hits:
-            return {"answer": None, "semanticResults": [], "citations": []}
-        ctx = "\n".join(f"[{h['senderName']}] {h['content']}" for h in hits)
-        from ..rag_prompt import LOCAL_WECHAT_RAG_SYSTEM_PROMPT as sys
-        user = f"对话片段：\n{ctx}\n\n问题：{body.question}"
-        try:
-            answer = llm.complete(sys, user, max_tokens=400, temperature=0.2)
-        except Exception as e:
-            logger.warning("RAG LLM failed: %s", e)
-            return {"answer": None, "semanticResults": hits, "citations": []}
-        return {
-            "answer": answer,
-            "citations": [
-                {"messageId": h["messageId"], "senderName": h["senderName"],
-                 "createdAt": h["createdAt"], "snippet": h["content"][:80]}
-                for h in hits[:5]
-            ],
-            "sourcesUsed": len(hits),
-        }
 
     return router

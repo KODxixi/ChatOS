@@ -1,4 +1,6 @@
-# ChatOS console
+# ChatOS console（已归档）
+
+> **2026-10-14 归档**：控制台已整体移入 `archive/`，不参与构建、启动与验收。网关不再注册前端 catch-all，`webDist` / `frontendUrl` 配置已移除，3108 端口退役。此目录仅作历史留存；要恢复需同时恢复 `plugins/frontend.py`、composition 里的 `frontend` 行、settings 的两个键与 `scripts/entry-contract.mjs` 的 UI 段（见 git 历史）。
 
 唯一维护源码，来源 e9d78e9c3f1c216c668a4810fe890d764131b88a。保留原型的 React/Vite/Express/Gary-UI 实现与视觉，禁止另建重复组件树。根 AGENTS 的数据、安全与模型约束继续生效。
 

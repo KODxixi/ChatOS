@@ -714,7 +714,6 @@ def test_create_app_registers_conversation_routes(tmp_path: Path) -> None:
         source_dir=tmp_path / "decrypted",
         library_db=database_path,
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
 

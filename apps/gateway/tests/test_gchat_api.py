@@ -16,7 +16,6 @@ def _settings(tmp_path: Path):
         source_dir=tmp_path / "decrypted",
         library_db=tmp_path / "data" / "library" / "wechat-ai.sqlite",
         output_dir=tmp_path / "output",
-        web_dist=tmp_path / "missing-web-dist",
         lm_base_url="http://127.0.0.1:1234/v1",
     )
 
@@ -173,10 +172,6 @@ def test_proposal_api_enforces_review_and_exposes_navigable_evidence(
     assert created.json()["status"] == "suggested"
     assert duplicate.json()["id"] == created.json()["id"]
 
-    evidence = client.get(
-        f"/api/gchat/memories/{created.json()['id']}/evidence"
-    )
-    assert evidence.json()["items"][0]["conversationId"] == "project-room"
     confirmed = client.patch(
         f"/api/gchat/memories/{created.json()['id']}",
         json={"status": "confirmed"},

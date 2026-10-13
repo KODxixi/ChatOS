@@ -28,7 +28,7 @@ from .kernel import (
     PluginError,
     PluginSpec,
 )
-from .composition import DEFAULT_COMPOSITION, load_composition
+from .composition import DEFAULT_COMPOSITION
 
 __all__ = [
     "Context",
@@ -38,5 +38,4 @@ __all__ = [
     "MissingServiceError",
     "PluginError",
     "PluginSpec",
-    "load_composition",
 ]

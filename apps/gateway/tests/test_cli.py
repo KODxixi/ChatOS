@@ -22,7 +22,6 @@ def _isolate_settings(monkeypatch, tmp_path: Path) -> None:
             source_dir=tmp_path / "decrypted",
             library_db=tmp_path / "library.sqlite",
             output_dir=tmp_path / "output",
-            web_dist=tmp_path / "web",
             lm_base_url="http://127.0.0.1:9123/v1",
         ),
     )

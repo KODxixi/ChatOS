@@ -249,40 +249,6 @@ def create_agent_router(
             headers={"Cache-Control": "no-store"},
         )
 
-    @router.post("/agent/runs/{run_id}/cancel", response_model=None)
-    def cancel_run(run_id: str) -> dict[str, object] | JSONResponse:
-        if runs is None:
-            return _error_response(
-                status_code=503,
-                code="AGENT_GATEWAY_UNAVAILABLE",
-                message="Agent Gateway 尚未启动。",
-                retryable=True,
-            )
-        try:
-            result = runs.request_cancel(run_id)
-            if run_created is not None:
-                run_created()
-            return result
-        except Exception as exc:
-            return _agent_error_response(exc)
-
-    @router.post("/agent/runs/{run_id}/retry", response_model=None)
-    def retry_run(run_id: str) -> dict[str, object] | JSONResponse:
-        if runs is None:
-            return _error_response(
-                status_code=503,
-                code="AGENT_GATEWAY_UNAVAILABLE",
-                message="Agent Gateway 尚未启动。",
-                retryable=True,
-            )
-        try:
-            result = runs.retry(run_id)
-            if run_created is not None:
-                run_created()
-            return result
-        except Exception as exc:
-            return _agent_error_response(exc)
-
     @router.get("/agent/route-candidates", response_model=None)
     def list_route_candidates() -> dict[str, object] | JSONResponse:
         if routes is None:

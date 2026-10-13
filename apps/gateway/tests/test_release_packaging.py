@@ -36,9 +36,8 @@ def test_current_launcher_requires_preflight_and_live_verification() -> None:
     assert "'--preflight'" in launcher
     assert "'--live'" in launcher
     assert "No processes were killed" in launcher
-    assert "captureUiRuntime" in verifier
+    assert "verifyTrackedSources" in verifier
     assert "gatewayIdentity" in verifier
-    assert "Live asset mismatch" in verifier
     assert 'node "%~dp0start_chatos.mjs"' in batch
 
 

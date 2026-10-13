@@ -358,14 +358,6 @@ def test_agent_runs_api_queues_replays_and_cancels_durable_runs(
     assert json.loads(replay.text)["runId"] == run_id
     assert json.loads(replay.text)["seq"] == 1
 
-    queued = client.post(
-        "/api/agent/runs",
-        json={"question": "Cancel me", "scope": {"mode": "global"}},
-    ).json()
-    cancelled = client.post(f"/api/agent/runs/{queued['runId']}/cancel")
-    assert cancelled.status_code == 200
-    assert cancelled.json()["status"] == "cancelled"
-
 
 def test_agent_stream_events_include_durable_run_id_and_sequence(
     tmp_path: Path,
