@@ -560,16 +560,20 @@ def run_incremental_organize(
             # un-called memory_cards pipeline into the organize job so the
             # memory_cards table finally gets rows; counts are surfaced in the
             # job result instead of silently staying at 0.
+            # Only runs when this round actually processed new conversations —
+            # an empty replay must stay "completed" instead of tripping the
+            # LLM-unavailable flag for no work.
             memory_report: dict[str, Any] = {}
-            try:
-                from .memory_cards import run_memory_cards_pass
-                memory_report = run_memory_cards_pass(connection, vault_root)
-                if memory_report.get("llmDegraded"):
+            if affected:
+                try:
+                    from .memory_cards import run_memory_cards_pass
+                    memory_report = run_memory_cards_pass(connection, vault_root)
+                    if memory_report.get("llmDegraded"):
+                        stats.llmDegraded = True
+                except Exception as exc:  # noqa: BLE001 - 卡片失败不拖垮整理
+                    logger.warning("organize.memory_cards failed: %s", exc)
+                    memory_report = {"error": str(exc), "llmDegraded": True}
                     stats.llmDegraded = True
-            except Exception as exc:  # noqa: BLE001 - 卡片失败不拖垮整理
-                logger.warning("organize.memory_cards failed: %s", exc)
-                memory_report = {"error": str(exc), "llmDegraded": True}
-                stats.llmDegraded = True
 
             # Stage 5: finish — persist result
             connection.commit()

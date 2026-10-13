@@ -82,7 +82,7 @@ def library(tmp_path: Path):
                 connection.execute(
                     "INSERT INTO messages"
                     "(id,conversation_id,dedupe_key,sender_id,sender_name,sent_at,type,content) "
-                    "VALUES (?,?,?,'synthetic-owner','Tester',?,'text',?)",
+                    "VALUES (?,?,?,'synthetic-owner','杨杰峰',?,'text',?)",
                     (
                         i * 10 + j + 1, cid, f"{cid}-{j}", now + i * 10 + j,
                         "明天下午三点前提交方案设计稿给甲方" if j == 9 else "收到",

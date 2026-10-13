@@ -50,7 +50,7 @@ def _seed_conversation(
                 (
                     m.get("id", 1000 + i),
                     conv_id,
-                    m.get("sender", "张三"),
+                    m.get("sender", "杨杰峰"),
                     m.get("sent_at", int(time.time() * 1000) - i * 60000),
                     m["content"],
                     f"dedup-{conv_id}-{i}",
@@ -233,7 +233,7 @@ class TestIncrementalOrganize:
             conn.execute(
                 """
                 INSERT INTO messages(id, conversation_id, sender_name, sent_at, type, content, dedupe_key)
-                VALUES (4002, 'conv-test-1', '李四', 1800000000000, 'text', '下周三之前完成施工图修改', 'dedup-new-1')
+                VALUES (4002, 'conv-test-1', '杨杰峰', 1800000000000, 'text', '下周三之前完成施工图修改', 'dedup-new-1')
                 """
             )
             conn.commit()

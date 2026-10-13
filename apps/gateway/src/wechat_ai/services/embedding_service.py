@@ -500,14 +500,16 @@ def _can_index_conversation(connection: sqlite3.Connection, conversation_id: str
     ).fetchone()
     if row is None or row[0] not in ("direct", "group"):
         return False
-    if row[0] == "direct":
-        return True
     # 人工显式开启（conversation_overrides.is_indexing_enabled=1）优先级最高：
     # 绕过噪音词与成员数阈值（2026-10-13 用户裁决：点名要入库的群必须入库）。
     if row[3] == 1:
         return True
+    # 被开关关闭（conversation.is_indexing_enabled=0 或 override=0）一律禁止索引，
+    # 包括 direct 会话——direct 不能绕过 disable 检查（data-safety 契约）。
     if not row[2]:
         return False
+    if row[0] == "direct":
+        return True
     if _is_noise_group(row[1] or ""):
         return False
     senders = connection.execute(
