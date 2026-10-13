@@ -260,8 +260,13 @@ async function oneshot() {
   if (state.gateway === 'absent') await startOnce('gateway', python, ['-m', 'wechat_ai', 'serve', '--port', new URL(GATEWAY_URL).port, '--no-browser'], gateway);
   if (state.ui === 'absent' && withUi) await startOnce('console', process.execPath, [path.join(consoleRoot, 'dist/server.cjs'), '--production'], consoleRoot);
   let lastError;
-  for (const deadline = Date.now() + 45_000; Date.now() < deadline;) {
+  let warnedSlow = false;
+  for (const deadline = Date.now() + 120_000; Date.now() < deadline;) {
     await delay(750);
+    if (!warnedSlow && Date.now() > deadline - 75_000) {
+      warnedSlow = true;
+      console.error('⏳ 服务仍在启动中（迁移/WAL 恢复/模型预热较慢），继续等待…');
+    }
     try {
       const verified = execFileSync(process.execPath, [gate, '--live'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: 'pipe' });
       console.log(cleanText(verified));
