@@ -19,6 +19,24 @@ node scripts/verify-entry.mjs --live
 
 统一启动器用 Node 隐藏启动网关（UI 默认不启动，`CHATOS_UI=1` 环境变量或 `--with-ui` 参数才启动 UI）；仅复用源码、构建及启动身份相符的服务。未知/过期端口占用会报错退出，不杀进程。默认门控只检查源码/构建/配置；`--live` 验证运行实例（网关必查；UI 在跑时额外校验跳转、HTML 与 assets）。
 
+> **新增/改动任何源码文件后必须先 `git add` 再启动**：预检拒绝未入 Git 索引的源码（`Source not Git tracked`），这是契约不是 bug——防止"本地改了但跑的是旧进程"的漂移。
+
+常用诊断与守护：
+
+```powershell
+scripts\start_chatos.bat --status    # 三态诊断：进程在 / 端口在 / 健康，一眼看清服务状态（rc 0=健康, 2=端口被不明进程占用）
+scripts\start_chatos.bat --watch     # 守护模式：本进程拉起网关，退出自动重启；崩溃循环自动退避告警
+```
+
+- `--status` 输出人话结论：「端口 8912 无监听 → 未启动」/「端口被 PID X 占用但身份不兼容 → 先处理占用进程」/「✅ 进程在 + 健康 app=ready」。
+- `--watch`：守护进程（supervisor）常驻，网关子进程退出 2s 后自动拉起；**30 秒内连续退出 ≥3 次判定崩溃循环**，退避升至 30s/60s/90s…并打醒目日志（查 `var/logs/gateway.stderr.log`）。日志沿用 `var/logs/*.log` 追加模式。
+- 守护与子进程的关系：子进程 detached 运行但**不 unref**（守护者持续感知退出）；Ctrl+C 停止守护会一并 Terminate 网关；**守护者被强杀（任务管理器/断电）时，网关子进程仍 detached 存活**——服务不停，只是失去自动重启，重新拉起 `--watch` 即可接管。
+- Windows 开机/登录自启（推荐）：`schtasks /Create /TN "ChatOS-Watch" /TR "cmd /c cd /d C:\ChatOS && node scripts\start_chatos.mjs --watch" /SC ONLOGON /RL LIMITED /F`。
+
+**进程外看门狗（已落地，计划任务 `ChatOS Watchdog`，每 5 分钟）**：`scripts\watchdog.mjs` 探测 `8912/api/health` 与 `9123/running`，任一死亡自动拉起（网关 → `node scripts\start_chatos.mjs`；llama-swap → `schtasks /run \LlamaSwap`），留痕 `var/logs/watchdog.log`，4 分钟冷却防与启动器验收窗口撞车。与 `--watch`（进程内守护）互补：两层都要。
+
+> **计划任务语义澄清**：`chatos-serve`（每日 07:30）只跑 `scripts\sync-once.ps1` 做 API 增量同步，**不拉起服务**——名称沿袭旧称，勿当自启动；`\LlamaSwap` 负责 llama-swap 9123 的登录/开机自启；服务自愈归 `ChatOS Watchdog`。
+
 ## 给 agent 的消费入口（网关 8912）
 
 | 能力 | 端点（示例） |

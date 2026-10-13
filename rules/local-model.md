@@ -62,7 +62,12 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 
 ## 启动与运维
 
-- **唯一正式启动**：根 `scripts/start_chatos.mjs`（`start_chatos.bat` 为双击薄壳），拉起网关 8912 与 UI 3108；正式日志 `var/logs/`。
+- **唯一正式启动**：根 `scripts/start_chatos.mjs`（`start_chatos.bat` 为双击薄壳，参数原样透传），拉起网关 8912 与 UI 3108；正式日志 `var/logs/`。任何预检/启动失败都是**非 0 退出 + 显眼错误块**（原因 + 下一步），不会"看起来成功"。
+- **新增/改动源码文件先 `git add` 再启动**：预检用 `git ls-files` 核验全部源码已入索引，未暂存一律拒绝启动（防本地改动与运行进程漂移）。
+- **诊断**：`node scripts\start_chatos.mjs --status` 一眼区分三态——进程在/端口在/`/api/health` 健康；端口被身份不兼容进程占用时输出 PID 与可执行路径，不替你杀进程。
+- **守护**：`node scripts\start_chatos.mjs --watch` 以本进程为 supervisor，网关退出自动重启（基线 2s 退避；30s 内崩 ≥3 次升级为 30s 起阶梯退避并告警）。开机自启：`schtasks /Create /TN "ChatOS-Watch" /TR "cmd /c cd /d C:\ChatOS && node scripts\start_chatos.mjs --watch" /SC ONLOGON /RL LIMITED /F`。守护者被强杀时网关子进程仍 detached 存活（服务不中断，仅失去自动重启）；Ctrl+C 会连同子进程一起停。
+- **进程外看门狗**：计划任务 `ChatOS Watchdog`（每 5 分钟）跑 `scripts\watchdog.mjs`，探测 `8912/api/health` 与 `9123/running`；网关死 → 拉起 `start_chatos.mjs`，llama-swap 死 → `schtasks /run \LlamaSwap`，留痕 `var/logs/watchdog.log`（4 分钟冷却）。这是 `--watch` 之外的兜底，部署后验收：kill 网关 ≤5 分钟自动恢复。
+- **现有计划任务语义**：`chatos-serve`（每日 07:30）只跑 `sync-once.ps1` 调 API 增量同步，**不拉起服务**（旧名沿袭）；`\LlamaSwap`（登录+开机双触发）拉起 9123；`\ChatOS\Hourly Incremental Sync` 每小时增量。
 - **启动前先按命令行匹配杀掉旧 `wechat_ai serve` 实例**，否则 SQLite `database is locked`。
 - 启动时自动执行 `self_check()`（SQL 绑定与表结构）和 `start_periodic_sync()`（每 15 分钟索引新消息，受 `indexing.syncEnabled` 控制）。
 - 一次性同步：先通过启动器启动并验证服务，再运行 `scripts/sync-once.ps1`；脚本复用现有服务，按真实任务状态等待完成，不关闭共享进程。
