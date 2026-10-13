@@ -159,7 +159,7 @@ def test_recover_interrupted_requeues_only_rebuildable_jobs(tmp_path: Path) -> N
 
     recovered = service.recover_interrupted()
 
-    assert recovered == {"interrupted": 2, "requeued": 1}
+    assert recovered == {"interrupted": 2, "requeued": 1, "resurrected": 0}
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
             """
@@ -193,7 +193,11 @@ def test_recover_interrupted_requeues_only_rebuildable_jobs(tmp_path: Path) -> N
             "manual",
         ),
     ]
-    assert service.recover_interrupted() == {"interrupted": 0, "requeued": 0}
+    assert service.recover_interrupted() == {
+        "interrupted": 0,
+        "requeued": 0,
+        "resurrected": 0,
+    }
 
 
 def test_claim_cancel_and_terminal_job_updates_are_atomic(tmp_path: Path) -> None:
@@ -569,3 +573,153 @@ def test_project_wechat_key_verifier_checks_source_salt_and_decrypted_header(
     assert verifier("message/message_0.db", bytes(32), salt) is False
     assert verifier("message/message_0.db", key, bytes(16)) is False
     assert verifier("../message/message_0.db", key, salt) is False
+
+
+def test_recover_resurrects_stuck_retrying_jobs(tmp_path: Path) -> None:
+    """P1-3: a crash that leaves a job in 'retrying' must not strand it forever."""
+    from wechat_ai.services.operations_service import BackgroundJobService
+
+    _database_path, connection_factory = _database(tmp_path)
+    service = BackgroundJobService(
+        connection_factory,
+        clock=lambda: "2026-10-13T00:00:00Z",
+        id_factory=lambda: "job-stuck",
+    )
+    service.create_job("retrieval", trigger_source="manual")
+    # Simulate a crash after the job was parked in 'retrying' awaiting a retry that
+    # never fires: claim_next only selects 'queued', so without recovery this row is
+    # invisible to the worker forever.
+    with sqlite3.connect(_database_path) as connection:
+        connection.execute(
+            "UPDATE background_jobs SET status = 'retrying', stage = 'retrying',"
+            " retry_count = 2 WHERE id = 'job-stuck'"
+        )
+        connection.commit()
+
+    recovered = service.recover_interrupted()
+
+    assert recovered == {"interrupted": 0, "requeued": 0, "resurrected": 1}
+    assert service.get_job("job-stuck")["status"] == "queued"
+    # It is actually claimable now, not stuck.
+    claimed = service.claim_next()
+    assert claimed is not None and claimed.id == "job-stuck"
+
+
+def test_concurrent_job_plane_writers_never_hit_database_is_locked(
+    tmp_path: Path,
+) -> None:
+    """P1-1: import / vectorize / organize style concurrent writers on the job plane
+    must serialize in-process and surface zero 'database is locked' errors."""
+    import sqlite3 as _sqlite3
+
+    from wechat_ai.services.operations_service import BackgroundJobService
+
+    _database_path, connection_factory = _database(tmp_path)
+    counter = iter(range(100_000))
+    service = BackgroundJobService(
+        connection_factory,
+        clock=lambda: "2026-10-13T00:00:00Z",
+        id_factory=lambda: f"job-{next(counter)}",
+    )
+    types = ("import", "retrieval", "incremental_organize")
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(3)
+
+    def writer(seed: int) -> None:
+        barrier.wait()
+        for i in range(40):
+            try:
+                service.create_job(
+                    types[seed % len(types)],
+                    trigger_source="stress",
+                    payload={"seed": seed, "n": i},
+                )
+                claimed = service.claim_next()
+                if claimed is not None:
+                    service.complete(claimed.id)
+            except BaseException as exc:  # collect everything; we assert on locked
+                errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(seed,)) for seed in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # Drain any job a claimer happened to leave queued at the end of its loop.
+    while True:
+        claimed = service.claim_next()
+        if claimed is None:
+            break
+        service.complete(claimed.id)
+
+    locked = [
+        exc
+        for exc in errors
+        if "database is locked" in str(exc)
+        or (isinstance(exc, _sqlite3.OperationalError) and "locked" in str(exc).lower())
+    ]
+    assert not locked, f"unexpected database lock errors: {locked[:3]}"
+    active = [
+        item
+        for item in service.list_jobs()["items"]
+        if item["status"] in {"queued", "running", "retrying"}
+    ]
+    assert active == []
+
+
+def test_scheduled_import_enqueue_survives_concurrent_writers(tmp_path: Path) -> None:
+    """P1-1 regression: the 'scheduled import enqueue' path must not fail with
+    database-is-locked when other job-plane writers run at the same time."""
+    from wechat_ai.services.job_worker import SyncImportScheduler
+    from wechat_ai.services.operations_service import (
+        BackgroundJobService,
+        SyncSettingsService,
+    )
+
+    _database_path, connection_factory = _database(tmp_path)
+    counter = iter(range(100_000))
+    jobs = BackgroundJobService(
+        connection_factory,
+        clock=lambda: "2026-10-13T00:00:00Z",
+        id_factory=lambda: f"job-{next(counter)}",
+    )
+    settings = SyncSettingsService(connection_factory)
+    settings.patch(enabled=True, interval_minutes=5)
+    notifications: list[bool] = []
+    scheduler = SyncImportScheduler(
+        jobs=jobs,
+        settings=settings,
+        notify_worker=lambda: notifications.append(True),
+    )
+
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(2)
+
+    def hammer(seed: int) -> None:
+        barrier.wait()
+        for i in range(20):
+            try:
+                jobs.create_job(
+                    "retrieval",
+                    trigger_source="stress",
+                    payload={"seed": seed, "n": i},
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, args=(s,)) for s in range(2)]
+    for thread in threads:
+        thread.start()
+    # The scheduled enqueue itself runs concurrently with the hammering writers.
+    scheduler.run_once()
+    for thread in threads:
+        thread.join()
+
+    locked = [exc for exc in errors if "locked" in str(exc).lower()]
+    assert not locked, f"scheduled enqueue contended on lock: {locked[:3]}"
+    assert notifications == [True]
+    # Exactly one import job was enqueued (dedup by active type+payload).
+    import_jobs = [j for j in jobs.list_jobs()["items"] if j["type"] == "import"]
+    assert len(import_jobs) == 1
+

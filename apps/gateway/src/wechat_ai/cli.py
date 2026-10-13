@@ -56,19 +56,42 @@ def serve(
         return
 
     from .config import load_settings as _load_settings
+    _s = _load_settings()
+
+    # P1-2：HTTP 身份检查有慢启动竞态（第二实例在第一实例绑定端口前探到
+    # "absent" 而重复启动）。这里在真正起服务前再取一把 pid/OS 级单实例锁，
+    # 兜底拒绝第二实例，避免双进程并发写同一 SQLite 库。HTTP 三态语义不变。
+    from .runtime_singleton import (
+        PortLockHeld,
+        acquire_port_lock,
+        port_lock_path,
+    )
+    try:
+        lock = acquire_port_lock(port_lock_path(_s.project_root, port))
+    except PortLockHeld as held:
+        typer.echo(
+            f"检测到端口 {port} 已有运行中的 ChatOS 实例（PID {held.owner_pid}）。"
+            "为避免多实例并发写同一 SQLite 库导致 database is locked，拒绝重复启动；"
+            "如需重启请先结束现有实例。",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     from .services.embedding_service import configure_from_settings as _cfg_embed
     from .services.embedding_service import start_periodic_sync as _start_index_sync
     from .services.message_cleaning import configure as _cfg_clean
-    _s = _load_settings()
-    _cfg_embed(_s)
-    _cfg_clean(_s)
-    app = create_app(_s)
-    # 索引周期线程：文档契约（rules/local-model.md「启动时自动执行 start_periodic_sync()」），
-    # 曾缺失调用导致新消息永不索引；幂等，syncEnabled=false 时自动 no-op
-    _start_index_sync(_s)
-    if not no_browser:
-        _start_browser_when_ready(base_url)
-    uvicorn.run(app, host=LOOPBACK_HOST, port=port)
+    try:
+        _cfg_embed(_s)
+        _cfg_clean(_s)
+        app = create_app(_s)
+        # 索引周期线程：文档契约（rules/local-model.md「启动时自动执行 start_periodic_sync()」），
+        # 曾缺失调用导致新消息永不索引；幂等，syncEnabled=false 时自动 no-op
+        _start_index_sync(_s)
+        if not no_browser:
+            _start_browser_when_ready(base_url)
+        uvicorn.run(app, host=LOOPBACK_HOST, port=port)
+    finally:
+        lock.release()
 
 
 @cli.command()

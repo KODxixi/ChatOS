@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
@@ -52,6 +53,13 @@ TERMINAL_JOB_STATUSES = frozenset(
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _FORBIDDEN_PAYLOAD_KEY_PARTS = ("body", "key", "path", "secret", "credential")
 _REBUILDABLE_JOB_TYPES = frozenset(JOB_TYPES - {"import"})
+
+# 进程级单写者锁（P1-1）：background_jobs 的所有写事务在同一把可重入锁内串行提交。
+# job_worker 线程、SyncImportScheduler 线程与 HTTP 请求线程原本各自 BEGIN IMMEDIATE，
+# 彼此抢同一 SQLite 写锁，叠加 import/embed 长事务即报 "database is locked"（上游日志
+# 52 次 + enqueue 退避 23 次）。WAL 下读不阻塞写，故只读路径（list/get/should_cancel）
+# 不取这把锁，只串行写；配合 P1-2 单实例，跨进程写竞争也被消除。
+_WRITE_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +112,22 @@ class BackgroundJobService:
         finally:
             connection.close()
 
+    @contextmanager
+    def _write(self) -> Iterable[sqlite3.Connection]:
+        """Serialized write transaction: process-wide single writer for the job plane.
+
+        Every ``BEGIN IMMEDIATE`` / committing write on ``background_jobs`` acquires
+        the process-level :data:`_WRITE_LOCK` for the duration of the short
+        transaction, so the worker thread, the sync-import scheduler thread and HTTP
+        request threads never hold competing write transactions against the same
+        SQLite file at once. Reads stay lock-free. The lock is held only around the
+        microsecond bookkeeping commit -- never while a job handler (import / embed /
+        organize) runs -- so it serializes without throttling real work.
+        """
+        with _WRITE_LOCK:
+            with self._open() as connection:
+                yield connection
+
     def create_job(
         self,
         job_type: str,
@@ -123,7 +147,7 @@ class BackgroundJobService:
             sort_keys=True,
         )
         now = self._clock()
-        with self._open() as connection:
+        with self._write() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 """
@@ -164,16 +188,17 @@ class BackgroundJobService:
         now = self._clock()
         interrupted = 0
         requeued = 0
-        with self._open() as connection:
+        resurrected = 0
+        with self._write() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
+            running = connection.execute(
                 """
                 SELECT * FROM background_jobs
                 WHERE status = 'running'
                 ORDER BY created_at ASC, id ASC
                 """
             ).fetchall()
-            for row in rows:
+            for row in running:
                 connection.execute(
                     """
                     UPDATE background_jobs
@@ -185,7 +210,7 @@ class BackgroundJobService:
                     (now, now, row["id"]),
                 )
                 interrupted += 1
-            for row in rows:
+            for row in running:
                 if str(row["type"]) not in _REBUILDABLE_JOB_TYPES:
                     continue
                 existing = connection.execute(
@@ -213,12 +238,38 @@ class BackgroundJobService:
                     (job_id, row["type"], row["payload_json"], now, now),
                 )
                 requeued += 1
+            # P1-3：'retrying' 被 health 视为活跃，但 claim_next 只捞 'queued'。
+            # 进程崩溃后滞留 retrying 的任务既不运行、也永远不会被重新领取——
+            # 永久卡死。启动恢复时就地复活为 queued（同一行，不触发唯一活跃索引），
+            # worker 下一轮即可领取；retry_count 保留以追踪历史。
+            retrying = connection.execute(
+                """
+                SELECT id FROM background_jobs
+                WHERE status = 'retrying'
+                """
+            ).fetchall()
+            for row in retrying:
+                connection.execute(
+                    """
+                    UPDATE background_jobs
+                    SET status = 'queued', stage = 'queued',
+                        error_code = NULL, finished_at = NULL,
+                        started_at = NULL, updated_at = ?
+                    WHERE id = ? AND status = 'retrying'
+                    """,
+                    (now, row["id"]),
+                )
+                resurrected += 1
             connection.commit()
-        return {"interrupted": interrupted, "requeued": requeued}
+        return {
+            "interrupted": interrupted,
+            "requeued": requeued,
+            "resurrected": resurrected,
+        }
 
     def claim_next(self) -> ClaimedJob | None:
         now = self._clock()
-        with self._open() as connection:
+        with self._write() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
@@ -300,7 +351,7 @@ class BackgroundJobService:
         error_code: str | None,
     ) -> dict[str, Any]:
         now = self._clock()
-        with self._open() as connection:
+        with self._write() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._job_row(connection, job_id)
             current_status = str(row["status"])
@@ -355,7 +406,7 @@ class BackgroundJobService:
 
     def request_cancel(self, job_id: str) -> dict[str, Any]:
         now = self._clock()
-        with self._open() as connection:
+        with self._write() as connection:
             row = self._job_row(connection, job_id)
             status = str(row["status"])
             if status in TERMINAL_JOB_STATUSES:
@@ -407,7 +458,7 @@ class BackgroundJobService:
         ):
             raise OperationsValidationError("invalid total progress")
         now = self._clock()
-        with self._open() as connection:
+        with self._write() as connection:
             row = self._job_row(connection, job_id)
             current_status = str(row["status"])
             if current_status in TERMINAL_JOB_STATUSES:
@@ -453,7 +504,7 @@ class BackgroundJobService:
             sort_keys=True,
         )
         now = self._clock()
-        with self._open() as connection:
+        with self._write() as connection:
             self._job_row(connection, job_id)  # raises NotFound if missing
             connection.execute(
                 "UPDATE background_jobs SET result_json = ?, updated_at = ? WHERE id = ?",

@@ -179,6 +179,47 @@ def test_load_settings_resolves_relative_paths_from_project_root(
     )
 
 
+def test_serve_rejects_when_single_instance_lock_is_held(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from wechat_ai import cli as cli_module
+    from wechat_ai import runtime_singleton as singleton
+
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "_existing_runtime_status",
+        lambda _url: "absent",
+    )
+
+    def boom(_path, **_kwargs):
+        raise singleton.PortLockHeld(
+            owner_pid=12345,
+            path=tmp_path / "wechat_ai-9016.pid",
+        )
+
+    monkeypatch.setattr(singleton, "acquire_port_lock", boom)
+    monkeypatch.setattr(
+        cli_module,
+        "create_app",
+        lambda _s: (_ for _ in ()).throw(AssertionError("must not create app")),
+    )
+    monkeypatch.setattr(
+        cli_module.uvicorn,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+
+    result = CliRunner().invoke(
+        cli_module.cli,
+        ["serve", "--port", "9016", "--no-browser"],
+    )
+
+    assert result.exit_code != 0
+    assert "拒绝重复启动" in result.output
+
+
 def test_load_settings_configures_project_whisper_defaults(
     tmp_path: Path,
     monkeypatch,
