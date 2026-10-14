@@ -100,10 +100,13 @@ class LocalKnowledgeIndex:
             raw_index_stats = json.loads(completed.stdout or "{}")
             if raw_index_stats.get("files_failed", 0):
                 raise RuntimeError(f"local-model index incomplete: {raw_index_stats['files_failed']} files failed")
+            # 只保留 JSON 可比的标量与 dict。bool 必须排除（它是 int 的子类），
+            # 但**不能只留数字**：optimize / prune 这类「清理结果」是 dict —— 2026-10-15
+            # 正是因为这里把它们滤掉，「旧版本从不回收、目录涨到 21 GB」才一直隐身。
             index_stats = {
                 key: value
                 for key, value in raw_index_stats.items()
-                if not isinstance(value, bool) and isinstance(value, (int, float))
+                if not isinstance(value, bool) and isinstance(value, (int, float, dict))
             }
             self._update(status="completed", stage="ready", stats={**archive_stats, **index_stats}, error=None)
         except Exception as exc:

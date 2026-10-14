@@ -84,7 +84,24 @@ def _write_registry(knowledge_root: Path, *, retrieval_base_url: str = "http://1
         "    embed_batch_size: 64\n"
         "    warmup_on_index: true\n"
     )
-    (knowledge_root / "local-model-registry.yaml").write_text(registry, encoding="utf-8")
+    _write_if_changed(knowledge_root / "local-model-registry.yaml", registry)
+
+
+def _write_if_changed(destination: Path, content: str) -> bool:
+    """只在内容变化时写盘，返回是否真的写了。
+
+    **2026-10-15 修复（"索引越来越慢"的真凶之一）**：此前这里是无条件 ``write_text``。
+    归档每跑一次就把**全部**投影文件的 mtime 刷新一遍，于是下游 local-model 的
+    「按 mtime 判断文件有没有变」的增量机制完全失效 —— 每轮索引都退化成全量重嵌
+    （实测 455 个文件 / 61,611 个分块 / 单轮 44 分钟）。内容没变就不该动文件。
+    """
+    try:
+        if destination.read_text(encoding="utf-8") == content:
+            return False
+    except (OSError, UnicodeDecodeError):
+        pass
+    destination.write_text(content, encoding="utf-8")
+    return True
 
 
 def archive_library(
@@ -223,27 +240,28 @@ def archive_library(
             for (conversation_id, month), sections in grouped.items():
                 destination = root / _safe_name(conversation_id, "conversation") / f"{month}.md"
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(
+                content = (
                     f"# {titles[(conversation_id, month)]} · {month}\n\n"
                     "> ChatOS 可重建知识投影；证据定位以 source_* 字段为准。\n\n"
                     + "\n\n---\n\n".join(sections)
-                    + "\n",
-                    encoding="utf-8",
+                    + "\n"
                 )
-                stats[stat] = int(stats[stat]) + 1
+                # 只在内容真的变了时写；否则刷新 mtime 会废掉下游的增量索引
+                if _write_if_changed(destination, content):
+                    stats[stat] = int(stats[stat]) + 1
 
         write_documents(catalog_root, catalog_documents, "catalogDocumentsWritten")
         write_documents(index_root, documents, "documentsWritten")
 
     _write_registry(knowledge_root, retrieval_base_url=retrieval_base_url)
-    (knowledge_root / "README.md").write_text(
+    _write_if_changed(
+        knowledge_root / "README.md",
         "# ChatOS 本地知识库\n\n"
         "微信数据库与原始媒体是只读真源；本目录全部内容均为可删除重建的投影。\n\n"
         "- `archive/objects/`：已解析媒体的内容寻址硬链接（跨盘时复制）\n"
         "- `catalog/`：含未解析状态在内的完整证据清单，不进入 embedding\n"
         "- `index/`：仅含可检索正文，供 local-model 建立向量索引\n"
         "- `lancedb/`：local-model 的 ChatOS 独立向量表\n",
-        encoding="utf-8",
     )
     logger.info("knowledge archive: %s", stats)
     return stats
