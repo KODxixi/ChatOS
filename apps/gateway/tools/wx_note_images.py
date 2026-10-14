@@ -351,8 +351,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        sys.stdout.reconfigure(errors="replace")
-        sys.stderr.reconfigure(errors="replace")
+        # **必须显式指定 UTF-8**：本工具输出中文。只设 errors="replace" 是不够的 ——
+        # 在不支持中文的代码页上（英文 Windows / CI 机器），编码仍是系统默认，中文会被
+        # 替换成 "?"，静默变乱码。2026-10-15 CI 首次运行即抓到这个：本机是中文环境，
+        # 永远复现不出来。
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):  # pragma: no cover
         pass
 
