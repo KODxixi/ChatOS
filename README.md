@@ -1,7 +1,7 @@
 # ChatOS — 本地 agent 的微信记忆与检索服务
 
 微信会话第二大脑，**消费方是本地 agent**（OpenClaw、Claude Code 等），不是浏览器用户。
-常驻网关 `http://127.0.0.1:8912` 提供 `/api/*`；也可用只读 MCP（`python -m wechat_ai mcp`）按需查询，不需要网关在跑。**没有浏览器 UI**——原控制台已归档到 `archive/chatos-console`。
+网关 `http://127.0.0.1:8912` 提供 `/api/*`，**按需拉起、不常驻**；也可用只读 MCP（`python -m wechat_ai mcp`）按需查询，不需要网关在跑。**没有浏览器 UI**——原控制台已归档到 `archive/chatos-console`。
 
 ## 启动
 
@@ -27,10 +27,11 @@ scripts\start_chatos.bat --watch     # 守护模式：本进程拉起网关，�
 
 - `--status` 输出人话结论：「端口 8912 无监听 → 未启动」/「端口被 PID X 占用但身份不兼容 → 先处理占用进程」/「✅ 进程在 + 健康 app=ready」。
 - `--watch`：守护进程（supervisor）常驻，网关子进程退出 2s 后自动拉起；**30 秒内连续退出 ≥3 次判定崩溃循环**，退避升至 30s/60s/90s…并打醒目日志（查 `var/logs/gateway.stderr.log`）。日志沿用 `var/logs/*.log` 追加模式。
-- 守护与子进程的关系：子进程 detached 运行但**不 unref**（守护者持续感知退出）；Ctrl+C 停止守护会一并 Terminate 网关；**守护者被强杀（任务管理器/断电）时，网关子进程仍 detached 存活**——服务不停，只是失去自动重启，重新拉起 `--watch` 即可接管。
-- Windows 开机/登录自启：**不再注册计划任务**（2026-10-14 起）。启停归本地 agent —— 查记忆前跑 `chatos` skill 的 `fresh`，它会按需把网关拉起来。详见 [生命周期与刷新](rules/local-model.md#生命周期与刷新2026-10-14-起chatos-不注册任何-windows-计划任务)。
+- 守护与子进程的关系：子进程 detached 运行但**不 unref**（守护者持续感知退出）；Ctrl+C 停止守护会一并 Terminate 网关。**注意 `detached` 只换进程组、不脱离 Windows job 对象**——调用方是短命会话时，子进程照样被一起带走，`--watch` 也救不了；要长期持有请走下面的 `ensure`（经 WMI）。
+- Windows 开机/登录自启：**不再注册计划任务**（2026-10-14 起）。网关改由**外部 harness 通用持有**——任何 agent 运行时（OpenClaw 的 agent、其他 agent 运行时、Claude Code 会话）跑一次 `chatos` skill 的 `ensure` 即可持有它；`fresh` 负责「判定新鲜度 + 点火一轮导入」。
+- **为什么 `ensure` 拉起的网关活得过会话**：它经 WMI 创建进程（`Win32_Process.Create`），网关挂在 `WmiPrvSE.exe` 下、不在调用方的 job 对象里。A/B 实测：同一个程序，直接 spawn 的那个在调用方进程树被 `taskkill /T` 后消失，经 WMI 起的那个仍存活。**可整段复制给别的 agent 的分发包**与验收判据见 [网关由外部 harness 持有](docs/harness-ownership.md)；契约见 [生命周期与刷新](rules/local-model.md#生命周期与刷新2026-10-14-起chatos-不注册任何-windows-计划任务)。
 
-**无进程外看门狗**（2026-10-14 起）：`ChatOS Watchdog`（每 30 分钟）与 `\ChatOS\Hourly Incremental Sync`（每小时）两个计划任务已删除，`scripts\watchdog.mjs` / `scriptsun_chatos_hourly_sync.cmd` 随之退役。
+**无进程外看门狗**（2026-10-14 起）：`ChatOS Watchdog`（每 30 分钟）与 `\ChatOS\Hourly Incremental Sync`（每小时）两个计划任务已删除，`scripts\watchdog.mjs` / `scripts\run_chatos_hourly_sync.cmd` 随之退役。
 
 > **为什么可以不要**：agent 侧查询走只读直连（不依赖网关）；导入与整理都由网关**自己**在跑的时候完成（导入每 15 分钟自调度，整理+知识索引挂在导入完成事件上、180 分钟节流）。看门狗只做兜底恢复，而它 95% 的轮次是空转。代价是**网关不再自愈**：
 > 它挂了要靠下次 agent 用之前 `chatos fresh` / `ensure` 拉起来。契约见 [生命周期与刷新](rules/local-model.md#生命周期与刷新2026-10-14-起chatos-不注册任何-windows-计划任务)。
@@ -99,4 +100,4 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway
 
 迁移入口和切换条件见 [本地检索契约](rules/local-model.md#迁移验收)。只在全量检查、生产索引切换及真实检索验收通过后提交并推送；已知失败要修复或按现役产品契约更新检查，不以历史基线失败作为豁免。
 
-详见 [启动、冲突处理与恢复](docs/canonical-entry.md)、[agent 入口](AGENTS.md) 和 [网关规则](rules/local-model.md)。
+详见 [启动、冲突处理与恢复](docs/canonical-entry.md)、[网关由外部 harness 持有](docs/harness-ownership.md)、[agent 入口](AGENTS.md) 和 [网关规则](rules/local-model.md)。
