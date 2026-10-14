@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    # 网关整套是 Windows 靶向的（凭据走 Windows Credential Manager、路径与编码按本机约定），
+    # 所以 CI 也跑 Windows —— 与本机一致，避免"本地过、CI 红"。
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: 安装依赖（按 uv.lock；含 migration 额外依赖与 dev 组）
+        working-directory: apps/gateway
+        run: uv sync --extra migration --group dev
+
+      - name: 测试
+        working-directory: apps/gateway
+        run: uv run pytest -q
