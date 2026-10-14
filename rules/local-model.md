@@ -72,9 +72,9 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 - **唯一正式启动**：根 `scripts/start_chatos.mjs`（`start_chatos.bat` 为双击薄壳，参数原样透传），只拉起网关 8912；正式日志 `var/logs/`。任何预检/启动失败都是**非 0 退出 + 显眼错误块**（原因 + 下一步），不会"看起来成功"。
 - **新增/改动源码文件先 `git add` 再启动**：预检用 `git ls-files` 核验全部源码已入索引，未暂存一律拒绝启动（防本地改动与运行进程漂移）。
 - **诊断**：`node scripts\start_chatos.mjs --status` 一眼区分三态——进程在/端口在/`/api/health` 健康；端口被身份不兼容进程占用时输出 PID 与可执行路径，不替你杀进程。
-- **守护**：`node scripts\start_chatos.mjs --watch` 以本进程为 supervisor，网关退出自动重启（基线 2s 退避；30s 内崩 ≥3 次升级为 30s 起阶梯退避并告警）。开机自启：`schtasks /Create /TN "ChatOS-Watch" /TR "cmd /c cd /d C:\ChatOS && node scripts\start_chatos.mjs --watch" /SC ONLOGON /RL LIMITED /F`。守护者被强杀时网关子进程仍 detached 存活（服务不中断，仅失去自动重启）；Ctrl+C 会连同子进程一起停。
-- **进程外看门狗**：计划任务 `ChatOS Watchdog`（每 30 分钟）跑 `scripts\watchdog.mjs`，探测 `8912/api/health` 与 `9123/running`；网关死 → 拉起 `start_chatos.mjs`，llama-swap 死 → `schtasks /run \LlamaSwap`，留痕 `var/logs/watchdog.log`（25 分钟冷却，须小于任务间隔）。**连续 3 轮拉起仍不健康 → 熔断 + `ALERT`**，网关恢复自动清计数。这是 `--watch` 之外的兜底，不承担可用性 SLA：agent 查询走只读直连，后台同步自己 ensure 网关。
-- **现有计划任务**：`\ChatOS\Hourly Incremental Sync`（每小时）跑 `run_chatos_hourly_sync.cmd`，**先幂等 ensure 网关**再增量同步；`\LlamaSwap`（登录+开机双触发）拉起 9123。旧任务 `chatos-serve` 已于 2026-10-14 删除（Disabled、不启动服务、与每小时同步重复）。
+- **守护**：`node scripts\start_chatos.mjs --watch` 以本进程为 supervisor，网关退出自动重启（基线 2s 退避；30s 内崩 ≥3 次升级为 30s 起阶梯退避并告警）。
+- **无进程外看门狗**（2026-10-14 起）：计划任务 `ChatOS Watchdog` 与 `\ChatOS\Hourly Incremental Sync` 已删除，`scripts\watchdog.mjs` 与 `scriptsun_chatos_hourly_sync.cmd` 随之退役 —— **不要再把它们接到任何计划任务上**（看门狗的唯一调用方就是那个已删任务）。启停与刷新见下文「生命周期与刷新」。
+- **本仓库自身零计划任务**：剩下的 `\LlamaSwap`（登录+开机双触发）是本地模型 9123 的自启，不归 ChatOS。
 - **启动前先按命令行匹配杀掉旧 `wechat_ai serve` 实例**，否则 SQLite `database is locked`。
 - 启动时自动执行 `self_check()`（SQL 绑定与表结构）和 `start_periodic_sync()`（每 15 分钟索引新消息，受 `indexing.syncEnabled` 控制）。
 - 一次性同步：先通过启动器启动并验证服务，再运行 `scripts/sync-once.ps1`；脚本复用现有服务，按真实任务状态等待完成，不关闭共享进程。
@@ -111,3 +111,37 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 - 专项验证（在 `apps/gateway`）：`.venv\Scripts\python.exe -B -m pytest tests/test_embedding_service.py tests/test_ask_api.py tests/test_chatos_knowledge_archive.py tests/test_round3_data_safety.py -q`
 - 全量验收：根 `node scripts/verify-entry.mjs [--live]`，具体命令见 README「验收与提交」。
 - 不查 OpenClaw/Gavis 的库，不使用已退役 local-models MCP，不占用 Archlib 8765。
+
+## 生命周期与刷新（2026-10-14 起：ChatOS 不注册任何 Windows 计划任务）
+
+**硬约束：不要再给 ChatOS 增加 Windows 计划任务。** 启停与刷新由本地 agent 按需驱动，
+不由系统时钟驱动。此条取代了此前并存的「ChatOS Watchdog（每 30 分钟）」与
+「ChatOS\Hourly Incremental Sync（每小时）」两个任务 —— 二者已于 2026-10-14 删除。
+
+### 职责划分（唯一权威）
+
+| 事 | 归谁 | 触发方式 |
+|---|---|---|
+| 拉起网关 | 本地 agent（`chatos` skill 的 `ensure`，幂等：已在跑即 no-op） | agent 需要后台能力时 |
+| 导入新消息 | 网关内置调度器 | 网关在跑时，按 `app_meta.sync_interval_minutes`（15）自跑 |
+| 导入后的投影（检索/图谱/媒体/语义） | 网关（`import.completed` 监听） | 每次导入完成 |
+| 整理 + 知识索引 | 网关（`import.completed` 监听 + 节流） | 距上轮超过 `_AUTO_REFRESH_INTERVAL_MINUTES`＝180 分钟才跑 |
+| 停网关 | **没有人主动停** | — |
+
+网关只在被 agent 叫醒后才活，**没有外部看门狗**：它挂了不会自愈，靠下一次 agent `ensure`。
+这带来一个已知破口 —— 完全没人访问的时段，记忆会旧且不设上限（这是「零调度」的必然结果）。
+
+### 新鲜度契约（agent 必须遵守）
+
+查微信记忆前先确认新鲜度：**距上次导入超过 3 小时就先刷新再答。**
+
+- 读记录本身**不需要网关**（只读直连、或只读 MCP 都行）。网关没起来 ≠ 用不了，只意味着记忆可能旧。
+- 基于旧记忆作答时必须声明「本次未同步，可能不含最近消息」，不要把旧结果说成现状。
+
+### 已知不完美（写在这里，避免以后被当成新故障重查）
+
+- **导入报 `WechatDecryptError: wechat database changed during refresh`**：微信正常运行时一直在写自己的库，
+  ChatOS 取一致快照的 3 次重试全部撞上「库在变」。这是与活库抢文件的必然结果，不是缺陷。
+- **`incremental_organize` / `semantic_graph` 常报 `degraded`**：整理本身在正常工作
+  （水位推进、任务抽取、项目更新都做了），降级来自 `LLM_UNAVAILABLE` —— 本地模型按需装卸时
+  30 秒（`llm_service.LLM_TIMEOUT`）不够用。要修就修那个超时，不要改整理逻辑。

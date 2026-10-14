@@ -28,13 +28,14 @@ scripts\start_chatos.bat --watch     # 守护模式：本进程拉起网关，�
 - `--status` 输出人话结论：「端口 8912 无监听 → 未启动」/「端口被 PID X 占用但身份不兼容 → 先处理占用进程」/「✅ 进程在 + 健康 app=ready」。
 - `--watch`：守护进程（supervisor）常驻，网关子进程退出 2s 后自动拉起；**30 秒内连续退出 ≥3 次判定崩溃循环**，退避升至 30s/60s/90s…并打醒目日志（查 `var/logs/gateway.stderr.log`）。日志沿用 `var/logs/*.log` 追加模式。
 - 守护与子进程的关系：子进程 detached 运行但**不 unref**（守护者持续感知退出）；Ctrl+C 停止守护会一并 Terminate 网关；**守护者被强杀（任务管理器/断电）时，网关子进程仍 detached 存活**——服务不停，只是失去自动重启，重新拉起 `--watch` 即可接管。
-- Windows 开机/登录自启（推荐）：`schtasks /Create /TN "ChatOS-Watch" /TR "cmd /c cd /d C:\ChatOS && node scripts\start_chatos.mjs --watch" /SC ONLOGON /RL LIMITED /F`。
+- Windows 开机/登录自启：**不再注册计划任务**（2026-10-14 起）。启停归本地 agent —— 查记忆前跑 `chatos` skill 的 `fresh`，它会按需把网关拉起来。详见 [生命周期与刷新](rules/local-model.md#生命周期与刷新2026-10-14-起chatos-不注册任何-windows-计划任务)。
 
-**进程外看门狗（计划任务 `ChatOS Watchdog`，每 30 分钟）**：`scripts\watchdog.mjs` 探测 `8912/api/health` 与 `9123/running`，任一死亡自动拉起（网关 → `node scripts\start_chatos.mjs`；llama-swap → `schtasks /run \LlamaSwap`），留痕 `var/logs/watchdog.log`，25 分钟冷却（必须小于任务间隔，否则冷却永不生效）。**连续 3 轮拉起后仍不健康则熔断并写 `ALERT`**，不再整夜空转；网关恢复后自动清计数（手动重置：删 `var/logs/.watchdog-state.json`）。与 `--watch`（进程内守护）互补：两层都要。
+**无进程外看门狗**（2026-10-14 起）：`ChatOS Watchdog`（每 30 分钟）与 `\ChatOS\Hourly Incremental Sync`（每小时）两个计划任务已删除，`scripts\watchdog.mjs` / `scriptsun_chatos_hourly_sync.cmd` 随之退役。
 
-> **30 分钟够用的前提**：agent 侧查询走只读直连（不依赖网关），后台同步自己会 ensure 网关（见下）。看门狗只做兜底恢复，不承担可用性 SLA。
+> **为什么可以不要**：agent 侧查询走只读直连（不依赖网关）；导入与整理都由网关**自己**在跑的时候完成（导入每 15 分钟自调度，整理+知识索引挂在导入完成事件上、180 分钟节流）。看门狗只做兜底恢复，而它 95% 的轮次是空转。代价是**网关不再自愈**：
+> 它挂了要靠下次 agent 用之前 `chatos fresh` / `ensure` 拉起来。契约见 [生命周期与刷新](rules/local-model.md#生命周期与刷新2026-10-14-起chatos-不注册任何-windows-计划任务)。
 
-> **计划任务语义**：`\ChatOS\Hourly Incremental Sync`（每小时）跑 `run_chatos_hourly_sync.cmd`——**第一步先幂等 ensure 网关**（不在跑就拉起来），再做增量同步，所以后台活不依赖看门狗的探活节奏；`\LlamaSwap` 负责 llama-swap 9123 的登录/开机自启；服务自愈归 `ChatOS Watchdog`。（旧任务 `chatos-serve` 已于 2026-10-14 删除：它 Disabled、名叫 serve 却不启动服务，功能与上面的每小时同步重复。）
+> **仍在用的计划任务**：只剩 `\LlamaSwap`（登录+开机双触发，拉起本地模型 9123），不归 ChatOS。
 
 ## 给 agent 的消费入口（网关 8912）
 

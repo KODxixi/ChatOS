@@ -59,11 +59,28 @@ def apply(ctx) -> None:
         ),
     )
     ctx.add_router("/api", create_sources_router(connection_factory))
+
+    # 知识索引在本进程里必须是单例：HTTP 路由与 organize 插件的 import 完成监听
+    # 都要用它。两个实例各自在内存里缓存 status，会互不可见并同时对一个
+    # LanceDB 目录发起刷新——所以在这里建一次、provide 出去，路由与监听共用。
+    from ..services.local_knowledge_index import LocalKnowledgeIndex
+
+    knowledge_index = (
+        LocalKnowledgeIndex.default(
+            settings.asset_dir.parent,
+            retrieval_base_url=settings.retrieval_base_url,
+        )
+        if settings.asset_dir is not None
+        else None
+    )
+    ctx.provide("knowledge.index", knowledge_index)
+
     ctx.add_router(
         "/api",
         create_knowledge_router(
             connection_factory,
             asset_root=settings.asset_dir,
+            local_index=knowledge_index,
             retrieval_base_url=settings.retrieval_base_url,
         ),
     )

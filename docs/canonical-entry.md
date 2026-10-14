@@ -27,7 +27,7 @@ node scripts/verify-entry.mjs --live
 
 - 唯一配置：`apps/gateway/config/settings.json`，`libraryDb` 相对值以网关目录解析。
 - 既有真实数据：`D:\ChatOS-Vault\library\wechat-ai.sqlite` 及媒体。不会迁移、删除或重置水位。原始表只读。
-- 日志：`var/logs/gateway.{stdout,stderr}.log`，另有 `watchdog.log` / `hourly-sync.log`；依赖与运行文件均被忽略。
+- 日志：`var/logs/gateway.{stdout,stderr}.log`；另有 `hourly-sync.log`（仅手动跑 `scripts/sync-once.ps1` 时产生）。`watchdog.log` 已随看门狗退役停写（计划任务 2026-10-14 删除）；依赖与运行文件均被忽略。
 
 ## 端口冲突与恢复
 
