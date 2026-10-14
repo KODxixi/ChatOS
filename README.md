@@ -72,9 +72,11 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway
 | 过滤规则 | 营销/闲聊/大群不入库不索引（`indexing.noiseGroupKeywords` + 成员阈值 30；`conversation_overrides` 显式开启优先于自动规则）；`/api/vector/status` 带 `filterRule.version` 指纹与 `filterBreakdown` 明细 |
 | 完成度口径 | `indexedEligible`（当前规则集合内已索引）/ `eligibleMessages`；`completionPct` 恒 ≤100%（`indexed` 是含规则收紧前存量的历史总数，不作分子） |
 | 事实演化 | 新事实覆盖旧记忆时，旧记录标记 `superseded` 并链到新记忆 id（`superseded_by`），**绝不物理删除**；查询默认排除被取代记录，可显式追溯历史 |
-| 记忆卡片 | organize 管线从新会话抽取偏好/关系/项目卡片 → `memory_cards` 派生表 + Vault 卡片文件；`projects`/`project_pulses` 同源产出 |
+| ~~记忆卡片~~ | **已停用（2026-10-15）**：30B 已剔除出 ChatOS，LLM 抽取路径关闭 → 记忆卡产量**恒为 0**；`projects` / `project_pulses` 等规则式产出照常。见[生命周期与刷新](rules/local-model.md) |
 
 检索/索引/迁移/运维的唯一规则入口：[rules/local-model.md](rules/local-model.md)。
+
+知识索引（`knowledge/` → LanceDB）是**增量**的：源文件没变就跳过不重嵌；每轮结束自动合并碎片并回收过期版本（保留 7 天），不会无限膨胀。
 
 ## 边界
 

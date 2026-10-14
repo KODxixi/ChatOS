@@ -29,6 +29,7 @@ curl http://127.0.0.1:8912/api/health  # 确认网关就绪（app=ready）
 | 改检索 / 向量 / 索引 / 迁移 / 运维规则（含过滤规则、事实演化、记忆卡片） | [唯一规则](rules/local-model.md) |
 | **要查微信记忆 / 判断记忆新不新 / 启停网关** | [生命周期与刷新](rules/local-model.md#生命周期与刷新2026-10-14-起chatos-不注册任何-windows-计划任务) —— 启停走 `chatos` skill，不要自己起进程 |
 | **要接管网关的持有 / 分发给别的 agent 去托管** | [网关由外部 harness 持有](docs/harness-ownership.md) —— 内含可直接整段复制的分发包 |
+| 知识索引（`knowledge/` 投影 → 向量库）跑得慢 / 目录变大 | [生命周期与刷新](rules/local-model.md) —— 它是增量的，慢或膨胀即说明增量失效 |
 | 改后端 API、数据库、迁移 SQL | [网关入口](apps/gateway/AGENTS.md) |
 | 给 agent 接入 / 改 MCP 工具 | `apps/gateway/src/wechat_ai/mcp_server.py`、`.mcp.json.example` |
 | 跑 / 改启动与验收 | `scripts/start_chatos.mjs`、`scripts/verify-entry.mjs` |
