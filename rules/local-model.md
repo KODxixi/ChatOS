@@ -156,6 +156,12 @@ un_chatos_hourly_sync.cmd` 随之退役 —— **不要再把它们接到任何�
 
 - **导入报 `WechatDecryptError: wechat database changed during refresh`**：微信正常运行时一直在写自己的库，
   ChatOS 取一致快照的 3 次重试全部撞上「库在变」。这是与活库抢文件的必然结果，不是缺陷。
-- **`incremental_organize` / `semantic_graph` 常报 `degraded`**：整理本身在正常工作
-  （水位推进、任务抽取、项目更新都做了），降级来自 `LLM_UNAVAILABLE` —— 本地模型按需装卸时
-  30 秒（`llm_service.LLM_TIMEOUT`）不够用。要修就修那个超时，不要改整理逻辑。
+- ~~`incremental_organize` / `semantic_graph` 常报 `degraded`~~ —— **2026-10-14 已修复**。
+  真因有两层，缺一不可：① `llm_service.complete()` 的异常分支执行 `_use_local_llm = False`，
+  是**进程级、永久生效**的关闭开关（外部兜底 2026-09-21 删除后，它唯一的作用只剩「永久放弃」）；
+  ② `LLM_TIMEOUT = 30s` 短于 30B 冷加载实测的 **44s**，而 llama-swap 给该模型设了 `ttl=900`，
+  间隔久了必是冷态。两者叠加 = **第一次冷启动超时就把整个进程的 LLM 能力锁死**，
+  于是 organize/semantic_graph 长期稳定 degraded，日志还把它误报成「端点不可达」。
+  修法：超时提到 180s；失败改为**有界冷却**（120s 后自动重试）而非永久关闭；
+  `_failure_hint` 把超时单独判、并排在 `OSError` 之前（`TimeoutError` 是它的子类）。
+  实测：修复后同一整理任务 42s 内 `completed`、`llmDegraded=false`、抽出 **8 张记忆卡**（修复前恒为 0）。

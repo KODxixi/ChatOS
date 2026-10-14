@@ -25,8 +25,16 @@ logger = logging.getLogger(__name__)
 # 2026-09-22：默认端点改为 llama-swap 9123（甲-1 迁移后 8080 已停用）。
 LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:9123/v1")
 LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "muse-glimmer-30b")
-LLM_TIMEOUT = 30.0
-_use_local_llm = True
+# 2026-10-14 实测：冷加载 30B（含 dflash 草稿模型）首次 chat completion 要 **约 44 秒**，
+# 而 llama-swap 给该模型设了 ttl=900 —— 间隔超过 15 分钟就必然回到冷态。原来的 30s 会把
+# 「模型正在加载」误判成「端点不可达」，于是每次冷启动都判失败。留 4 倍余量。
+LLM_TIMEOUT = 180.0
+# 失败后的**冷却**，不是永久关闭：到点自动恢复。一次瞬时报错不该把整个进程的能力锁死
+# （旧实现是 `_use_local_llm = False`，进程级永久生效，直到网关重启 —— 那才是
+# 「整理/语义图谱一直 degraded」的真正成因）。
+_LLM_COOLDOWN_SECONDS = 120.0
+_use_local_llm = True   # 人工/测试用的总开关；失败路径不再改它
+_llm_retry_at = 0.0     # 冷却截止时刻（time.monotonic 基准）
 
 
 def _cache_key(task_type: str, reference_id: str, content: str) -> str:
@@ -79,7 +87,8 @@ def put_cached(
 
 
 def is_available(*, local_only: bool = False) -> bool:  # local_only 已无意义，保留形参兼容调用方
-    return _use_local_llm
+    """当前是否可以尝试本地模型。冷却期内返回 False，到点自动恢复（不会永久关闭）。"""
+    return _use_local_llm and time.monotonic() >= _llm_retry_at
 
 
 def _try_call(base: str, model: str, key: str | None, payload: dict) -> dict:
@@ -104,7 +113,15 @@ def _failure_hint(exc: BaseException | None) -> str:
         if exc.code == 404:
             return "（HTTP 404：模型名不存在，检查 settings 的 model 字段）"
         return f"（HTTP {exc.code}：检查本地端点 {LOCAL_BASE}）"
-    if isinstance(exc, (urllib.error.URLError, ConnectionError, TimeoutError, OSError)):
+    # 超时必须单独判，且要排在 OSError 之前：TimeoutError 是 OSError 的子类，
+    # 而且 urlopen 超时可能抛 URLError 包着 socket.timeout。否则会把"模型在冷加载"
+    # 误报成"端点不可达"，把人引向完全错误的方向（2026-10-14 就被这么误导过）。
+    if isinstance(exc, TimeoutError) or "timed out" in str(exc).lower():
+        return (
+            f"（请求超时 >{LLM_TIMEOUT:.0f}s：本地模型冷加载实测约 44s，"
+            "端点本身很可能正常 —— 先确认 llama-swap 里该模型是否刚被卸载）"
+        )
+    if isinstance(exc, (urllib.error.URLError, ConnectionError, OSError)):
         return "（端点不可达：检查 llama-swap 9123 是否启动）"
     return ""
 
@@ -131,10 +148,10 @@ def complete(
         "max_tokens": max_tokens,
         "stream": False,
     }
-    global _use_local_llm
+    global _llm_retry_at
     last = None
     tries = []
-    if _use_local_llm:
+    if is_available():
         tries.append((LOCAL_BASE, LOCAL_MODEL, None, "local"))
     for base, model, key, tag in tries:
         try:
@@ -147,8 +164,12 @@ def complete(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             last = exc
             if tag == "local":
-                _use_local_llm = False
-                logger.warning("local LLM unreachable: %s", exc)
+                _llm_retry_at = time.monotonic() + _LLM_COOLDOWN_SECONDS
+                logger.warning(
+                    "local LLM call failed: %s；冷却 %.0fs 后自动重试（不永久关闭）",
+                    exc,
+                    _LLM_COOLDOWN_SECONDS,
+                )
     logger.warning("LLM call failed: %s%s", last, _failure_hint(last))
     raise OpenAICompatibleUnavailable("LLM call failed") from last
 

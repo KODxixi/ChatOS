@@ -123,3 +123,52 @@ def test_malformed_json_array_raises_unavailable(monkeypatch) -> None:
 
     with pytest.raises(OpenAICompatibleUnavailable):
         llm_service.filter_todos([{"index": 0, "text": "整理明天下午项目周会的会议纪要"}])
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14：一次失败不再永久关闭本地 LLM
+#
+# 缺陷原貌：``complete()`` 的异常分支执行 ``_use_local_llm = False`` —— 进程级、
+# 永久生效，直到网关重启。配合 30s 的 ``LLM_TIMEOUT``（短于 30B 冷加载实测的
+# **44s**），第一次冷启动超时就把整个进程的 LLM 能力锁死：organize 与
+# semantic_graph 从此稳定 ``degraded``（error_code=LLM_UNAVAILABLE），
+# 而日志还把它误报成"端点不可达"。
+#
+# 修复后契约：失败只进入**有界冷却**，``_use_local_llm`` 不再被改写，到点自动恢复。
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_hint_blames_cold_load_not_unreachable_endpoint() -> None:
+    """超时不能报成"端点不可达"——那是把人引向错误方向的诊断。"""
+    hint = llm_service._failure_hint(TimeoutError("timed out"))
+    assert "超时" in hint
+    assert "不可达" not in hint
+
+
+def test_unreachable_endpoint_still_hints_endpoint_down() -> None:
+    hint = llm_service._failure_hint(ConnectionRefusedError("connection refused"))
+    assert "不可达" in hint
+
+
+def test_failure_cools_down_then_recovers_without_disabling_llm(monkeypatch) -> None:
+    """核心回归锁：一次失败只进冷却，不永久关闭，且到点自动恢复。"""
+    monkeypatch.setattr(llm_service, "_use_local_llm", True)
+    monkeypatch.setattr(llm_service, "_llm_retry_at", 0.0)
+
+    def _boom(*args, **kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(llm_service, "_try_call", _boom)
+
+    assert llm_service.is_available() is True
+
+    with pytest.raises(OpenAICompatibleUnavailable):
+        llm_service.complete("system", "user")
+
+    # 进入冷却 —— 但总开关没被关掉（旧实现正是在这里把它置 False）
+    assert llm_service.is_available() is False
+    assert llm_service._use_local_llm is True
+
+    # 冷却到点后自动恢复，不需要重启进程
+    monkeypatch.setattr(llm_service, "_llm_retry_at", 0.0)
+    assert llm_service.is_available() is True
