@@ -156,12 +156,12 @@ un_chatos_hourly_sync.cmd` 随之退役 —— **不要再把它们接到任何�
 
 - **导入报 `WechatDecryptError: wechat database changed during refresh`**：微信正常运行时一直在写自己的库，
   ChatOS 取一致快照的 3 次重试全部撞上「库在变」。这是与活库抢文件的必然结果，不是缺陷。
-- ~~`incremental_organize` / `semantic_graph` 常报 `degraded`~~ —— **2026-10-14 已修复**。
-  真因有两层，缺一不可：① `llm_service.complete()` 的异常分支执行 `_use_local_llm = False`，
-  是**进程级、永久生效**的关闭开关（外部兜底 2026-09-21 删除后，它唯一的作用只剩「永久放弃」）；
-  ② `LLM_TIMEOUT = 30s` 短于 30B 冷加载实测的 **44s**，而 llama-swap 给该模型设了 `ttl=900`，
-  间隔久了必是冷态。两者叠加 = **第一次冷启动超时就把整个进程的 LLM 能力锁死**，
-  于是 organize/semantic_graph 长期稳定 degraded，日志还把它误报成「端点不可达」。
-  修法：超时提到 180s；失败改为**有界冷却**（120s 后自动重试）而非永久关闭；
-  `_failure_hint` 把超时单独判、并排在 `OSError` 之前（`TimeoutError` 是它的子类）。
-  实测：修复后同一整理任务 42s 内 `completed`、`llmDegraded=false`、抽出 **8 张记忆卡**（修复前恒为 0）。
+- **30B 已从 ChatOS 剔除（2026-10-15 用户裁定）**：ChatOS 不再调用 `muse-glimmer-30b`。
+  ① `llm_service` 默认关闭 —— 组织整理里的 LLM 过滤 / 记忆卡抽取退回规则式；
+  ② 媒体富集的 VLM 路径已删除，改用本地 RapidOCR（本地小模型、只认字不解图、不碰 30B）。
+  **图像理解由 agent 自己的多模态能力承担。**
+  → **因此 `incremental_organize` 会稳定显示 `degraded` / `LLM_UNAVAILABLE`：这是设计状态，不是故障。**
+  判据：水位推进、任务抽取、项目更新照常（这些走规则式），只有**记忆卡恒为 0**。
+  > 历史：2026-10-14 曾把这个 degraded 当成 bug 来查，并修掉了一个真 bug（`complete()` 失败后
+  > 永久关闭本地 LLM 的进程级开关 + 30s 超时短于 30B 冷加载的 44s）。那个 bug 是真的，
+  > 但**方向已被 2026-10-15 的裁定取代** —— 现在根本不该调它。

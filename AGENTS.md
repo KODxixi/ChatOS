@@ -45,3 +45,5 @@ curl http://127.0.0.1:8912/api/health  # 确认网关就绪（app=ready）
 - ❌ **不要再给 ChatOS 注册 Windows 计划任务**（看门狗、定时同步都不要再加）。启停归 agent，
   刷新归网关的 `import.completed` 监听；加计划任务就退回被淘汰的那套，见[生命周期](rules/local-model.md)。
 - ❌ 别在 `install` / 装机脚本 / `start_chatos.*` 里顺手把它装成 Windows 服务或任务 —— 同上。
+- ❌ **不要再给 ChatOS 加回本地生成模型**（30B / VLM / 任何 chat 模型）：2026-10-15 已裁定剔除，
+  理解类工作交给 **agent 自己的能力**；本仓库只保留向量与精排等小模型。见[生命周期与刷新](rules/local-model.md)。

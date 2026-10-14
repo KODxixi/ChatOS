@@ -33,7 +33,11 @@ LLM_TIMEOUT = 180.0
 # （旧实现是 `_use_local_llm = False`，进程级永久生效，直到网关重启 —— 那才是
 # 「整理/语义图谱一直 degraded」的真正成因）。
 _LLM_COOLDOWN_SECONDS = 120.0
-_use_local_llm = True   # 人工/测试用的总开关；失败路径不再改它
+# 2026-10-15 用户裁定：**把 30B 剔除出 ChatOS 的依赖**。ChatOS 是 agent 驱动的检索/管道层，
+# 不该自带生成模型；组织整理退回规则式（任务抽取本就不依赖它），图像理解交给 agent 自己的
+# 多模态能力。默认关闭 → complete() 直接抛 OpenAICompatibleUnavailable，调用方按既有契约
+# 静默降级，不再产生任何对 9123 的 chat 请求。要临时启用就把这里改回 True。
+_use_local_llm = False
 _llm_retry_at = 0.0     # 冷却截止时刻（time.monotonic 基准）
 
 

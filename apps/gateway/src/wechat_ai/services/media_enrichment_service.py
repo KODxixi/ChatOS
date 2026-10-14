@@ -11,10 +11,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-import base64
-import json
-import urllib.request
-
 from ..wechat_media import (
     decode_silk_to_wav,
     prepare_silk_wav,
@@ -55,10 +51,10 @@ class MediaEnrichmentService:
         if image_text_extractor is not None:
             self._image_text_extractor = image_text_extractor
             self._image_extractor_available = True
-        elif _vlm_available():
-            self._image_text_extractor = _vlm_image_extractor
-            self._image_extractor_available = True
         else:
+            # 2026-10-15 用户裁定：把 30B 剔除出 ChatOS 的依赖 —— 图像理解改由 agent 自己的
+            # 多模态能力承担，ChatOS 不再用 30B VLM。这里退回本地 RapidOCR：同样是本地小模型、
+            # 不碰 30B、不抢显存，只做"认字"不做"理解"。
             self._image_text_extractor = _rapidocr_extractor
             self._image_extractor_available = _rapidocr_available()
         self._audio_transcriber = audio_transcriber or _whisper_cpp_transcriber
@@ -316,78 +312,6 @@ class MediaEnrichmentService:
             (text, asset_id),
         )
 
-
-
-_VLM_URL = "http://127.0.0.1:9123/v1/chat/completions"
-_VLM_MODEL = "muse-glimmer-30b"
-_VLM_TIMEOUT = 90
-
-
-def _vlm_image_extractor(path: Path) -> str | None:
-    """Extract text + describe image content via Muse Glimmer 30B (VLM, llama-swap 9123).
-
-    Unlike RapidOCR (which only does OCR), a VLM understands the image:
-    it describes the scene, objects, layout, and extracts all visible text
-    in one call.  This is the primary image extractor; RapidOCR is the
-    CPU-only fallback when LM Studio is unavailable.
-    """
-    mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
-    try:
-        with open(path, "rb") as f:
-            image_b64 = base64.b64encode(f.read()).decode("ascii")
-    except OSError:
-        return None
-    payload = {
-        "model": _VLM_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "请详细描述这张图片的内容，并完整提取图片中所有可见的文字信息。"
-                            "如果是聊天截图，请逐行提取对话内容，保留发送者和时间。"
-                            "如果是文档/报表截图，请按结构提取文字和数据。"
-                            "输出格式：[图片描述] ... [提取文字] ..."
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{image_b64}"},
-                    },
-                ],
-            }
-        ],
-        "max_tokens": 1024,
-        "temperature": 0.1,
-    }
-    req = urllib.request.Request(
-        _VLM_URL,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=_VLM_TIMEOUT) as resp:
-            result = json.loads(resp.read())
-        text_content = result["choices"][0]["message"]["content"].strip()
-        return text_content or None
-    except Exception:
-        return None
-
-
-def _vlm_available() -> bool:
-    """Check if LM Studio has the VLM model loaded."""
-    try:
-        with urllib.request.urlopen(f"{_VLM_URL.rsplit('/', 2)[0]}/models", timeout=5) as resp:
-            models = json.loads(resp.read())
-        return any(
-            m.get("id", "").casefold() == _VLM_MODEL.casefold()
-            for m in models.get("data", [])
-        )
-    except Exception:
-        return False
 
 
 _OCR_INSTANCE: object | None = None

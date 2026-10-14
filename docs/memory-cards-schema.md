@@ -43,7 +43,7 @@
 ## 抽取管线
 
 1. **采样（只读）**：近 14 天私聊 + 项目域群聊，过滤占位/系统/短于 6 字消息（`sample_messages`）。
-2. **本地模型抽取**：编号后喂给 muse-glimmer-30b（`http://127.0.0.1:9123/v1`，`max_tokens≥4096`、`reasoning_effort:low`、并发 1、只取 `content`），要求输出 JSON 数组，每条带 `evidence` 消息编号。
+2. ~~**本地模型抽取**~~ —— **2026-10-15 起停用**（用户裁定把 30B 剔除出 ChatOS，图像/文本理解交给 agent 自己的能力）：不再调用 `muse-glimmer-30b`，本步直接跳过，**记忆卡产量恒为 0**，下游 `memory_cards` 表与 `cards/` 目录不再增长。历史实现保留备查：编号后喂给 muse-glimmer-30b（`http://127.0.0.1:9123/v1`，`max_tokens≥4096`、`reasoning_effort:low`、并发 1、只取 `content`），要求输出 JSON 数组，每条带 `evidence` 消息编号。
 3. **解析**：稳健截取 `[...]` JSON，非法条目丢弃（`parse_llm_cards`）。
 4. **去重合并**：`dedupe_cards`。
 5. **落盘**：`write_cards` 写 `index.json` + `cards/{id}.md`；表存在时 `upsert_db` 同步派生表。
