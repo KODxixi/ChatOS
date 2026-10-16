@@ -30,13 +30,13 @@ harness，现在请承担这个角色。
 请依次做三件事：
 
 1) 拉起并持有
-   在【本机真 shell】里执行：
-     python C:\AI\skills\chatos\scripts\chatos.py ensure --wait 180
+   在【本机真 shell】里执行（chatos skill 为部署者本地安装，路径按部署替换）：
+     python <chatos skill 目录>\scripts\chatos.py ensure --wait 180
    期望：stdout 一个 JSON，gateway 字段为 "ready"（本来就在跑）或 "started"
    （刚拉起），退出码 0。
 
 2) 查记忆新鲜度
-     python C:\AI\skills\chatos\scripts\chatos.py fresh
+     python <chatos skill 目录>\scripts\chatos.py fresh
    期望：退出码 0（新鲜）或 3（偏旧）。
    ⚠️ 拿到 3 不是失败：本机一次导入要跑 10–43 分钟，fresh 默认【不等待】是刻意的，
    它只负责「判定 + 点火 + 如实汇报」。若你之后要回答微信相关问题，需声明
@@ -49,7 +49,7 @@ harness，现在请承担这个角色。
 【硬约束 · 别做】
 - ❌ 不要给 ChatOS 注册任何 Windows 计划任务（看门狗、定时同步都不要加）
 - ❌ 不要停网关（chatos skill 不提供 stop；停会打断 10–43 分钟的导入）
-- ❌ 不要直连 D:\ChatOS-Vault 的库文件绕开脚本
+- ❌ 不要直连 `<vault>` 的库文件绕开脚本
 - ✅ 查聊天记录用 chatos.py search / conversations / messages / tasks —— 这些
   不需要网关，网关没起来也能查
 

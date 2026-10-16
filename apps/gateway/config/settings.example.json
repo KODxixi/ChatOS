@@ -1,5 +1,5 @@
 {
-  "libraryDb": "D:\\ChatOS-Vault\\library\\wechat-ai.sqlite",
+  "libraryDb": "C:\\path\\to\\wechat-ai.sqlite",
   "rerankEnabled": false,
   "indexing": { "model": "text-embedding-qwen3-embedding-0.6b", "dimensions": 1024, "batchSize": 128 },
   "activityFilterEnabled": true,

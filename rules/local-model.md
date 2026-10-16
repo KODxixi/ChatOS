@@ -1,7 +1,7 @@
 # ChatOS 本地检索与运行契约（唯一规则）
 
 > 本文件是 ChatOS 仓库内**唯一**的规则文件。模型端点/参数/显存一律不在此复述——
-> 唯一权威是 `C:\AI\memory\_canonical\LOCAL-MODELS.md`，只写指针、不抄数字（避免漂移）。
+> 唯一权威是部署者本地的模型权威文件（LOCAL-MODELS.md），只写指针、不抄数字（避免漂移）。
 
 ## 定位
 
@@ -14,7 +14,7 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 - **派生表与原始表严格分离**：`message_embeddings`/`tasks`/`llm_cache`/`retrieval_chunks` 等派生表可写，但与微信原始表分开放、互不污染；迁移 SQL 只增不改，已提交的绝不回改。
 - **没有浏览器 UI**：agent 消费只走网关 `/api/*` 或只读 MCP（`python -m wechat_ai mcp`）。原控制台已归档到 `archive/chatos-console`，不参与构建与验收；网关不注册任何前端 catch-all。
 - **启动前先杀旧实例**：启动任何本地服务前，先按命令行匹配杀掉旧 `wechat_ai serve` 实例，避免 SQLite `database is locked`。
-- 本地模型端点/维度/显存不在本仓库复述——唯一权威 `C:\AI\memory\_canonical\LOCAL-MODELS.md`，本文件只写指针。
+- 本地模型端点/维度/显存不在本仓库复述——唯一权威是部署者本地的模型权威文件（LOCAL-MODELS.md），本文件只写指针。
 
 ## 配置与调用
 
@@ -53,9 +53,9 @@ ChatOS 是**本地 agent（OpenClaw 等）的微信会话记忆与检索服务**
 
 ## 数据与状态
 
-- 消息：`libraryDb` 指定的 SQLite（当前 `D:\ChatOS-Vault\library\wechat-ai.sqlite`），派生表 `message_embeddings`；**微信原始表只读**。
+- 消息：`libraryDb` 指定的 SQLite（部署示例 `<vault>\library\wechat-ai.sqlite`），派生表 `message_embeddings`；**微信原始表只读**。
 - 文件：同目录 `knowledge/lancedb` 的 `kb_chatos`，源文档在 `knowledge/index`；这是文件文字投影，不是 Archlib 图文索引。
-- 会话分类：`kind` ∈ direct（私聊）/ group（群聊，`@chatroom` 结尾）/ system（公众号 `gh_` 开头）/ unknown；领域分类（project/work/personal/service/subscription）与活跃度（30 天发言阈值，`activityFilterInactiveDays`）由网关与 UI 使用，会话本体在 `D:\ChatOS-Vault\conversations\`（本仓库只有指针）。
+- 会话分类：`kind` ∈ direct（私聊）/ group（群聊，`@chatroom` 结尾）/ system（公众号 `gh_` 开头）/ unknown；领域分类（project/work/personal/service/subscription）与活跃度（30 天发言阈值，`activityFilterInactiveDays`）由网关与 UI 使用，会话本体在 `<vault>\conversations\`（本仓库只有指针）。
 - 正式网关 8912；`GET /api/vector/status` 返回配置及真实 `indexSpaces`，`GET /api/knowledge/index/status` 返回文件索引状态。无服务时用只读 SQLite 查询 `SELECT model_version,length(embedding)/4,count(*) FROM message_embeddings WHERE status='indexed' GROUP BY model_version,length(embedding)`。
 - 旧索引与当前模型或维度不符时拒绝读写，提示 shadow 重建；不得混入新向量或修改旧 BLOB。
 
@@ -100,7 +100,7 @@ un_chatos_hourly_sync.cmd` 随之退役 —— **不要再把它们接到任何�
 - 恢复（先确认无进程连接，幂等、安全）：服务停止状态下执行
 
 ```powershell
-& 'C:\ChatOS\apps\gateway\.venv\Scripts\python.exe' -c "import sqlite3; c=sqlite3.connect(r'D:\ChatOS-Vault\library\wechat-ai.sqlite'); print(c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()); c.close()"
+& '<仓库根>\apps\gateway\.venv\Scripts\python.exe' -c "import sqlite3; c=sqlite3.connect(r'<vault>\library\wechat-ai.sqlite'); print(c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()); c.close()"
 ```
 
 - 结果应为 `(0, N, N)`（busy=0）即合并成功；`(1, ...)` 表示有连接占用，先停服务再重试。合并后 `-wal` 与 `-shm` 被清空/回收，主库时间戳更新。
@@ -108,7 +108,7 @@ un_chatos_hourly_sync.cmd` 随之退役 —— **不要再把它们接到任何�
 
 ## 入口与验证
 
-- [local-model Skill](C:/AI/skills/local-model/SKILL.md)：CLI 参数和本地模型调用。
+- [local-model Skill](<部署者本地 skill 路径>/local-model/SKILL.md)：CLI 参数和本地模型调用。
 - 专项验证（在 `apps/gateway`）：`.venv\Scripts\python.exe -B -m pytest tests/test_embedding_service.py tests/test_ask_api.py tests/test_chatos_knowledge_archive.py tests/test_round3_data_safety.py -q`
 - 全量验收：根 `node scripts/verify-entry.mjs [--live]`，具体命令见 README「验收与提交」。
 - 不查 OpenClaw/Gavis 的库，不使用已退役 local-models MCP，不占用 Archlib 8765。

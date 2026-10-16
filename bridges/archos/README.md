@@ -20,7 +20,7 @@ ChatOS 会话库 → 项目信息提取 Agent → project-brief.md → bridge �
    - 关键时间节点（报审、施工、交付）
    - 甲方意见与反馈
    - 相关文件/图纸引用
-3. **生成**：写入 `D:\ChatOS-Vault\conversations\project\{project_id}\project-brief.md`
+3. **生成**：写入 `<vault>\conversations\project\{project_id}\project-brief.md`
 4. **同步**：通过 bridge 契约将更新推送到 ArchOS 对应项目目录
 
 ### ArchOS → ChatOS（反方向）
@@ -66,7 +66,7 @@ ChatOS 会话库 → 项目信息提取 Agent → project-brief.md → bridge �
   "last_synced_at": 1234567890,
   "last_message_id": 12345,
   "sync_status": "success|pending|failed",
-  "archos_project_path": "C:\\GarchOS\\dds\\projects\\..."
+  "archos_project_path": "<archos-project-root>\\dds\\projects\\..."
 }
 ```
 
@@ -81,6 +81,6 @@ ChatOS 会话库 → 项目信息提取 Agent → project-brief.md → bridge �
 ## 约束
 
 - 不得直接读写 ArchOS 仓库的源代码文件
-- 同步目标是 ArchOS 的项目数据目录（`D:\GarchOS-Vault\` 或 ArchOS 约定的项目目录）
+- 同步目标是 ArchOS 的项目数据目录（`<archos-vault>\` 或 ArchOS 约定的项目目录）
 - 同步失败时记录状态，不阻塞 ChatOS 正常运行
 - 项目 ID 命名空间与 ArchOS 对齐，避免冲突

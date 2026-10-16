@@ -1,4 +1,4 @@
-name: test
+name: CI
 
 on:
   push:
@@ -6,15 +6,15 @@ on:
   pull_request:
 
 jobs:
-  test:
+  ci:
     # 网关整套是 Windows 靶向的（凭据走 Windows Credential Manager、路径与编码按本机约定），
     # 所以 CI 也跑 Windows —— 与本机一致，避免"本地过、CI 红"。
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 uv
+      - name: 安装 uv（Python 3.13）
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -24,6 +24,23 @@ jobs:
         working-directory: apps/gateway
         run: uv sync --extra migration --group dev
 
-      - name: 测试
+      - name: 单元测试
         working-directory: apps/gateway
+        # conftest 已把本机模型 HTTP 打桩为不可达，测试不依赖本机 llama-swap，
+        # 因此在 CI 上可独立跑。
         run: uv run pytest -q
+
+      - name: 安装 Node（verify-entry 使用内置 node:sqlite，需 >= 22.5）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 构造 schema 契约测试库
+        run: python scripts/make-ci-library.py .ci-library/wechat-ai.sqlite
+
+      - name: 仓库验收（verify-entry --preflight）
+        # 源码全部 git tracked + 库 schema 契约 + 配置身份一致性。
+        # CHATOS_LIBRARY_DB 覆盖 settings.json 的本机库路径，让 CI 无本机数据也能验收。
+        env:
+          CHATOS_LIBRARY_DB: .ci-library/wechat-ai.sqlite
+        run: node scripts/verify-entry.mjs --preflight

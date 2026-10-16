@@ -1,0 +1,44 @@
+{
+  "version": 0,
+  "note": "ChatOS 待办个性化画像模板。复制为 personalization.json 并按需填写；personalization.json 已被 .gitignore 忽略，不会提交。以下字段仅为结构示例，所有值均需替换为你的真实数据。",
+  "owner": {
+    "name": "你的姓名",
+    "role": "你的职务",
+    "aliases_in_chat": [
+      "你的群昵称"
+    ],
+    "addressed_as": [
+      "别人怎么称呼你"
+    ]
+  },
+  "relationship": {
+    "client": [],
+    "leadership": [],
+    "peer": [],
+    "colleagues": [],
+    "colleagues_note": "",
+    "assigners": [],
+    "others": []
+  },
+  "rules": {
+    "group_requires_addressing": true,
+    "direct_always_eligible": true,
+    "drop_group_chatter": true,
+    "drop_directed_elsewhere": false,
+    "leadership_must_be_addressed_in_group": false,
+    "client_leadership_always_high": true,
+    "direct_min_priority": "medium",
+    "priority_boost": {
+      "client": "high",
+      "leadership": "high",
+      "peer": "low",
+      "colleague": "low",
+      "assigner": "low"
+    },
+    "staleness": {
+      "archive_days": 3,
+      "fresh_days": 3
+    }
+  },
+  "noise_notes": []
+}

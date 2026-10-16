@@ -1,7 +1,7 @@
 # 记忆卡片 Schema Spec（Memory Cards）
 
 > 抽取管线：`apps/gateway/src/wechat_ai/services/memory_cards.py`
-> 人读主存储：`D:\ChatOS-Vault\knowledge\memory-cards\`（每张一个 `.md` + `index.json`）
+> 人读主存储：`<vault>\knowledge\memory-cards\`（每张一个 `.md` + `index.json`）
 > 结构化查询派生表：`memory_cards`（迁移 `025_memory_cards.sql`，表不存在时管线自动跳过 DB 写入）
 
 ## 目标
@@ -12,10 +12,10 @@
 
 | type | 中文 | 示例 |
 |---|---|---|
-| `preference` | 偏好/习惯 | Gary 习惯用 mouse DPI 800、晚睡 |
-| `relationship` | 关系/角色 | 曹耀耀是武汉 HYP 项目的造型负责人 |
-| `project` | 项目 | 武汉 HYP 项目在做柱廊造型优化阶段 |
-| `fact` | 事实 | 杭州咏滨名邸某楼栋成交价、某会议地址 |
+| `preference` | 偏好/习惯 | 用户习惯用 mouse DPI 800、晚睡 |
+| `relationship` | 关系/角色 | 某人是某项目的造型负责人 |
+| `project` | 项目 | 某项目在做造型优化阶段 |
+| `fact` | 事实 | 某楼盘某楼栋成交价、某会议地址 |
 | `decision` | 决策 | 柱子改扁、侧面要有平段 |
 | `constraint` | 约束 | 抬板高度必须满足深圳日照标准 |
 | `event` | 事件/节点 | 明天改层叠拱券、下周报审 |

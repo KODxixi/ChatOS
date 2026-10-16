@@ -18,6 +18,7 @@ dist/
 # Local configuration and sensitive state
 config/*.json
 apps/gateway/config/settings.json
+apps/gateway/config/personalization.json
 !config/*.example.json
 config.json
 .env
@@ -43,6 +44,7 @@ data/**
 var/
 tmp/
 artifacts/
+.ci-library/
 
 # Keys
 key/

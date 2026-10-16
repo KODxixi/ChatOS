@@ -8,7 +8,7 @@
 前置 Node >=22.13、Python >=3.13；后端在 `apps/gateway` 用 `uv sync --extra migration` 安装。运行配置为 `apps/gateway/config/settings.json`，模板在同目录。检索空间以该配置 `indexing` 段为契约值；旧索引必须从原文重建并验收后切换，不能只改配置。
 
 ```powershell
-cd C:\ChatOS
+cd <ChatOS 仓库根>
 node scripts/verify-entry.mjs
 scripts\start_chatos.bat            # 唯一启动入口：网关 8912
 node scripts/verify-entry.mjs --live
@@ -49,7 +49,7 @@ scripts\start_chatos.bat --watch     # 守护模式：本进程拉起网关，�
 | 知识归档 / 文件索引 | `GET /api/knowledge/*`、`GET /api/knowledge/index/status` |
 | 向量状态 | `GET /api/vector/status` |
 
-完整路由与参数以 `apps/gateway/src/wechat_ai/api/` 源码为准。模型端点与维度**不在仓库文档复述**——见 `rules/local-model.md` 与 `C:\AI\memory\_canonical\LOCAL-MODELS.md`。
+完整路由与参数以 `apps/gateway/src/wechat_ai/api/` 源码为准。模型端点与维度**不在仓库文档复述**——见 `rules/local-model.md`；本地模型权威文件由部署者自行维护，仓库只写指针。
 
 ## 给 AI 接上（MCP 插头，可选但推荐）
 
@@ -58,7 +58,7 @@ ChatOS 自带零依赖 MCP stdio server（只读），Claude Code / OpenClaw 等
 1. 复制仓库根 `.mcp.json.example` 为你的 AI 工具的项目配置（Claude Code 为 `.mcp.json`，OpenClaw 按 `mcpServers` 同构配置）。
 2. 启动后你的 AI 会看到 5 个工具：`chatos_search`（搜聊天记录）、`chatos_conversations`（会话列表）、`chatos_recent_messages`（读最近消息）、`chatos_tasks`（待办）、`chatos_memory_status`（记忆健康）。
 
-MCP 进程与网关独立：**不需要网关在跑**，只读打开 `D:\ChatOS-Vault` 的库，不写任何数据。手动验证：
+MCP 进程与网关独立：**不需要网关在跑**，只读打开 `libraryDb` 指向的库（数据目录由部署者在 `apps/gateway/config/settings.json` 配置），不写任何数据。手动验证：
 
 ```powershell
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway\.venv\Scripts\python.exe -m wechat_ai mcp
@@ -83,7 +83,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway
 | 项 | 位置 |
 |---|---|
 | 核心服务（网关 API） | `apps/gateway`，8912 |
-| 数据 | `libraryDb` 配置；当前 `D:\ChatOS-Vault\library\wechat-ai.sqlite`；**原始表只读**；会话/知识指针在 `D:\ChatOS-Vault\conversations\` 与 `knowledge/`（本仓库仅指针） |
+| 数据 | `libraryDb` 配置指定（部署示例 `<vault>\library\wechat-ai.sqlite`）；**原始表只读**；会话/知识指针在 `<vault>\conversations\` 与 `knowledge/`（本仓库仅指针） |
 | 历史归档 | `docs/archive/`、`archive/`（含已归档的 agent-runtime 与 chatos-console 控制台，勿当现役） |
 | 日志 / 备份 | `var/logs` / `var/backups`，不入 Git |
 
@@ -94,7 +94,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | apps\gateway
 - **没有浏览器 UI**：agent 只用网关 `/api/*` 或只读 MCP；原控制台已归档到 `archive/chatos-console`，不参与构建与验收。
 - 启动任何本地服务前，先按命令行杀掉旧 `wechat_ai serve` 实例，避免 SQLite 锁。
 
-模型调用一律本地（llama-swap，见 LOCAL-MODELS.md），无外部额度。
+模型调用一律本地（llama-swap 中继），无外部额度；端点与维度配置见 `rules/local-model.md`。
 
 ## 验收与提交
 

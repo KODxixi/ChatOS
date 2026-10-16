@@ -7,7 +7,7 @@
 需要 Node >=22.13（内置 SQLite）与 Python >=3.13。在 `apps/gateway` 运行 `uv sync`；从同目录 `config/settings.example.json` 创建不入库的 `config/settings.json` 并设置数据库路径。
 
 ```powershell
-cd C:\ChatOS
+cd <ChatOS 仓库根>
 node scripts/verify-entry.mjs
 scripts\start_chatos.bat
 node scripts/verify-entry.mjs --live
@@ -26,7 +26,7 @@ node scripts/verify-entry.mjs --live
 ## 数据、配置与日志
 
 - 唯一配置：`apps/gateway/config/settings.json`，`libraryDb` 相对值以网关目录解析。
-- 既有真实数据：`D:\ChatOS-Vault\library\wechat-ai.sqlite` 及媒体。不会迁移、删除或重置水位。原始表只读。
+- 既有真实数据：`<vault>\library\wechat-ai.sqlite` 及媒体（数据目录由 `settings.json` 的 `libraryDb` 指定）。不会迁移、删除或重置水位。原始表只读。
 - 日志：`var/logs/gateway.{stdout,stderr}.log`；另有 `hourly-sync.log`（仅手动跑 `scripts/sync-once.ps1` 时产生）。`watchdog.log` 已随看门狗退役停写（计划任务 2026-10-14 删除）；依赖与运行文件均被忽略。
 
 ## 端口冲突与恢复

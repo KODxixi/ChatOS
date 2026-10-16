@@ -51,6 +51,10 @@ export function settingsPath(root) {
 }
 
 export function resolveLibraryDb(root) {
+  // 通用型覆盖：CI / 无本机数据的环境用 CHATOS_LIBRARY_DB 指向临时库；
+  // 未设置时回退 settings.json（本机行为不变）。
+  const override = process.env.CHATOS_LIBRARY_DB?.trim();
+  if (override) return path.resolve(override);
   const settings = JSON.parse(fs.readFileSync(settingsPath(root), 'utf8'));
   if (typeof settings.libraryDb !== 'string' || !settings.libraryDb.trim()) throw new Error('libraryDb is missing from gateway settings');
   return path.resolve(root, 'apps/gateway', settings.libraryDb);
